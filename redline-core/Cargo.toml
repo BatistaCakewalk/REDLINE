@@ -1,0 +1,7 @@
+[package]
+name = "redline-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# We don't need external crates yet, keeping it raw and fast!
