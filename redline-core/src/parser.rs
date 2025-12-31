@@ -1,17 +1,16 @@
-pub fn parse_statement(tokens: Vec<Token>) {
-    match &tokens[0] {
-        Token::Let => {
-            // Logic for: let x: int = 10
-            println!("I found a variable declaration!");
-        }
-        Token::Def => {
-            // Logic for: def my_func():
-            println!("I found a function!");
-        }
-        Token::Identifier(name) => {
-            // Logic for function calls: print(name)
-            println!("I found a call to {}", name);
-        }
-        _ => println!("Syntax Error: I don't know what this is."),
+// use crate::lexer::Token;
+
+// The Parser is a placeholder for future development.
+// It will be responsible for building an Abstract Syntax Tree (AST) from the token stream.
+/*
+pub struct Parser<'a> {
+    tokens: &'a [Token],
+    pos: usize,
+}
+
+impl<'a> Parser<'a> {
+    pub fn new(tokens: &'a [Token]) -> Self {
+        Self { tokens, pos: 0 }
     }
 }
+*/
