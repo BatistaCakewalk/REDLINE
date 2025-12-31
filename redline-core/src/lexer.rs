@@ -1,11 +1,25 @@
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Token {
-    Var, Val, Def, Pub, Print, Input, Return, If, Else, True, False, While, For, In,
+pub enum TokenType {
+    Var, Val, Def, Pub, Print, Return, If, Else, True, False, While, For, In,
     Ident(String), Int(i64), Float(f64), Str(String), Type(String),
     Op(String), Arrow, Colon, Assign, LParen, RParen, Comma, Newline, Range,
     Indent, Dedent,
+    EOF,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Token {
+    pub token_type: TokenType,
+    pub line: usize,
+    pub column: usize,
+}
+
+impl Token {
+    pub fn new(token_type: TokenType, line: usize, column: usize) -> Self {
+        Self { token_type, line, column }
+    }
 }
 
 #[derive(Debug)]
@@ -55,284 +69,169 @@ impl Lexer {
         let mut indent_stack = vec![0];
 
         while self.pos < self.input.len() {
-            // Handle indentation at the start of a line
+            // --- Indentation Handling ---
             if self.column == 1 {
                 let mut spaces = 0;
                 let mut lookahead = self.pos;
                 let mut is_empty_line = false;
-
                 while lookahead < self.input.len() {
                     match self.input[lookahead] {
                         ' ' => spaces += 1,
                         '\t' => spaces += 4,
-                        '\n' => {
+                        '\n' | '\r' => {
                             is_empty_line = true;
                             break;
                         }
-                        '\r' => {},
                         _ => break,
                     }
                     lookahead += 1;
                 }
 
-                if is_empty_line {
-                    // Skip whitespace on empty lines
-                    while self.pos < lookahead {
-                        self.advance();
-                    }
-                    // Let the main loop handle the newline
-                } else {
-                    // Handle indentation changes
+                if !is_empty_line {
                     let last_indent = *indent_stack.last().unwrap();
                     if spaces > last_indent {
                         indent_stack.push(spaces);
-                        tokens.push(Token::Indent);
+                        tokens.push(Token::new(TokenType::Indent, self.line, self.column));
                     } else if spaces < last_indent {
                         while spaces < *indent_stack.last().unwrap() {
                             indent_stack.pop();
-                            tokens.push(Token::Dedent);
+                            tokens.push(Token::new(TokenType::Dedent, self.line, self.column));
                         }
                         if spaces != *indent_stack.last().unwrap() {
-                            return Err(LexerError {
-                                message: "Unindent does not match any outer indentation level".to_string(),
-                                line: self.line,
-                                column: self.column,
-                            });
+                            return Err(LexerError { message: "Unindent does not match any outer indentation level".to_string(), line: self.line, column: self.column });
                         }
                     }
-
-                    // Consume indentation
-                    while self.pos < lookahead {
-                        self.advance();
-                    }
+                    // Consume the indentation whitespace
+                    self.pos = lookahead;
+                    self.column = spaces + 1;
                 }
             }
 
-            if self.pos >= self.input.len() {
-                break;
-            }
+            if self.pos >= self.input.len() { break; }
 
+            // --- Token Parsing ---
+            let start_col = self.column;
             let c = self.input[self.pos];
+
             match c {
-                ' ' | '\r' | '\t' => self.advance(),
-                '\n' => {
-                    tokens.push(Token::Newline);
-                    self.advance();
-                }
-                ':' => {
-                    tokens.push(Token::Colon);
-                    self.advance();
-                }
+                ' ' | '\r' | '\t' => { self.advance(); },
+                '\n' => { tokens.push(Token::new(TokenType::Newline, self.line, start_col)); self.advance(); },
+                ':' => { tokens.push(Token::new(TokenType::Colon, self.line, start_col)); self.advance(); },
+                '(' => { tokens.push(Token::new(TokenType::LParen, self.line, start_col)); self.advance(); },
+                ')' => { tokens.push(Token::new(TokenType::RParen, self.line, start_col)); self.advance(); },
+                ',' => { tokens.push(Token::new(TokenType::Comma, self.line, start_col)); self.advance(); },
                 '=' => {
                     if self.pos + 1 < self.input.len() && self.input[self.pos + 1] == '=' {
-                        tokens.push(Token::Op("==".to_string()));
-                        self.advance();
-                        self.advance();
+                        tokens.push(Token::new(TokenType::Op("==".to_string()), self.line, start_col));
+                        self.advance(); self.advance();
                     } else {
-                        tokens.push(Token::Assign);
+                        tokens.push(Token::new(TokenType::Assign, self.line, start_col));
                         self.advance();
                     }
-                }
-                '(' => {
-                    tokens.push(Token::LParen);
-                    self.advance();
-                }
-                ')' => {
-                    tokens.push(Token::RParen);
-                    self.advance();
-                }
-                ',' => {
-                    tokens.push(Token::Comma);
-                    self.advance();
-                }
+                },
                 '.' => {
                     if self.pos + 1 < self.input.len() && self.input[self.pos + 1] == '.' {
-                        tokens.push(Token::Range);
-                        self.advance();
-                        self.advance();
+                        tokens.push(Token::new(TokenType::Range, self.line, start_col));
+                        self.advance(); self.advance();
                     } else {
-                         // This case should ideally be handled by numeric parsing if it's part of a float,
-                         // but here we might catch a standalone dot if not handled elsewhere.
-                         // For now, let's assume it's an error or part of float logic handled above.
-                         // Actually, the numeric parser handles leading dots for floats.
-                         // If we get here, it's a dot that is NOT part of a number (e.g. method call syntax in future).
-                         return Err(LexerError {
-                            message: format!("Unexpected character: ."),
-                            line: self.line,
-                            column: self.column,
-                        });
+                        return Err(LexerError { message: "Unexpected character: .".to_string(), line: self.line, column: start_col });
                     }
-                }
+                },
                 '>' | '<' | '!' => {
-                    let next = self.input.get(self.pos + 1);
-                    if next == Some(&'=') {
-                        tokens.push(Token::Op(format!("{}=", c)));
-                        self.advance();
-                        self.advance();
+                    if self.pos + 1 < self.input.len() && self.input[self.pos + 1] == '=' {
+                        tokens.push(Token::new(TokenType::Op(format!("{}=", c)), self.line, start_col));
+                        self.advance(); self.advance();
                     } else {
-                        tokens.push(Token::Op(c.to_string()));
+                        tokens.push(Token::new(TokenType::Op(c.to_string()), self.line, start_col));
                         self.advance();
                     }
-                }
-                '+' | '*' | '/' => {
-                    tokens.push(Token::Op(c.to_string()));
-                    self.advance();
-                }
+                },
+                '+' | '*' | '/' => { tokens.push(Token::new(TokenType::Op(c.to_string()), self.line, start_col)); self.advance(); },
                 '-' => {
                     if self.pos + 1 < self.input.len() && self.input[self.pos + 1] == '>' {
-                        tokens.push(Token::Arrow);
-                        self.advance();
-                        self.advance();
+                        tokens.push(Token::new(TokenType::Arrow, self.line, start_col));
+                        self.advance(); self.advance();
                     } else {
-                        tokens.push(Token::Op("-".to_string()));
+                        tokens.push(Token::new(TokenType::Op("-".to_string()), self.line, start_col));
                         self.advance();
                     }
-                }
-                '#' => {
-                    while self.pos < self.input.len() && self.input[self.pos] != '\n' {
-                        self.advance();
-                    }
-                }
+                },
+                '#' => { while self.pos < self.input.len() && self.input[self.pos] != '\n' { self.advance(); } },
                 '"' => {
                     self.advance();
                     let mut s = String::new();
                     while self.pos < self.input.len() {
-                        if self.input[self.pos] == '"' {
-                            break;
-                        }
+                        if self.input[self.pos] == '"' { break; }
                         if self.input[self.pos] == '\\' {
                             self.advance();
                             if self.pos < self.input.len() {
                                 match self.input[self.pos] {
-                                    'n' => s.push('\n'),
-                                    't' => s.push('\t'),
-                                    'r' => s.push('\r'),
-                                    '\\' => s.push('\\'),
-                                    '"' => s.push('"'),
+                                    'n' => s.push('\n'), 't' => s.push('\t'), 'r' => s.push('\r'),
+                                    '\\' => s.push('\\'), '"' => s.push('"'),
                                     _ => s.push(self.input[self.pos]),
                                 }
                             }
-                        } else {
-                            s.push(self.input[self.pos]);
-                        }
+                        } else { s.push(self.input[self.pos]); }
                         self.advance();
                     }
                     if self.pos < self.input.len() && self.input[self.pos] == '"' {
-                        tokens.push(Token::Str(s));
+                        tokens.push(Token::new(TokenType::Str(s), self.line, start_col));
                         self.advance();
                     } else {
-                        return Err(LexerError {
-                            message: "Unterminated string literal".to_string(),
-                            line: self.line,
-                            column: self.column,
-                        });
+                        return Err(LexerError { message: "Unterminated string literal".to_string(), line: self.line, column: start_col });
                     }
-                }
+                },
                 _ if c.is_alphabetic() => {
                     let mut ident = String::new();
-                    while self.pos < self.input.len() 
-                        && (self.input[self.pos].is_alphanumeric() || self.input[self.pos] == '_')
-                    {
+                    while self.pos < self.input.len() && (self.input[self.pos].is_alphanumeric() || self.input[self.pos] == '_') {
                         ident.push(self.input[self.pos]);
                         self.advance();
                     }
-                    match ident.as_str() {
-                        "var" => tokens.push(Token::Var),
-                        "val" => tokens.push(Token::Val),
-                        "def" => tokens.push(Token::Def),
-                        "if" => tokens.push(Token::If),
-                        "else" => tokens.push(Token::Else),
-                        "pub" => tokens.push(Token::Pub),
-                        "return" => tokens.push(Token::Return),
-                        "print" => tokens.push(Token::Print),
-                        "input" => tokens.push(Token::Input),
-                        "true" => tokens.push(Token::True),
-                        "false" => tokens.push(Token::False),
-                        "while" => tokens.push(Token::While),
-                        "for" => tokens.push(Token::For),
-                        "in" => tokens.push(Token::In),
-                        "int" | "float" | "string" | "bool" => tokens.push(Token::Type(ident)),
-                        _ => tokens.push(Token::Ident(ident)),
-                    }
-                }
-                _ if c.is_numeric() || c == '.' => {
+                    let token_type = match ident.as_str() {
+                        "var" => TokenType::Var, "val" => TokenType::Val, "def" => TokenType::Def,
+                        "if" => TokenType::If, "else" => TokenType::Else, "pub" => TokenType::Pub,
+                        "return" => TokenType::Return, "print" => TokenType::Print,
+                        "true" => TokenType::True, "false" => TokenType::False,
+                        "while" => TokenType::While, "for" => TokenType::For, "in" => TokenType::In,
+                        "int" | "float" | "string" | "bool" => TokenType::Type(ident),
+                        _ => TokenType::Ident(ident),
+                    };
+                    tokens.push(Token::new(token_type, self.line, start_col));
+                },
+                _ if c.is_numeric() => {
                     let mut num = String::new();
                     let mut is_float = false;
-
-                    if c == '.' {
-                        // Check if it's a range operator ".."
-                        if self.pos + 1 < self.input.len() && self.input[self.pos + 1] == '.' {
-                             tokens.push(Token::Range);
-                             self.advance();
-                             self.advance();
-                             continue;
-                        }
-                        is_float = true;
-                        num.push('0');
-                        num.push('.');
-                        self.advance();
-                    }
-
                     while self.pos < self.input.len() && (self.input[self.pos].is_numeric() || self.input[self.pos] == '.') {
                         if self.input[self.pos] == '.' {
-                            // Check if it's a range operator ".." immediately following a number (e.g. 1..10)
-                            if self.pos + 1 < self.input.len() && self.input[self.pos + 1] == '.' {
-                                break; // Stop parsing number, let the next iteration catch the ".."
-                            }
-
-                            if is_float {
-                                return Err(LexerError {
-                                    message: format!("Invalid number: multiple decimal points"),
-                                    line: self.line,
-                                    column: self.column,
-                                });
-                            }
+                            if self.pos + 1 < self.input.len() && self.input[self.pos + 1] == '.' { break; }
+                            if is_float { return Err(LexerError { message: "Invalid number: multiple decimal points".to_string(), line: self.line, column: self.column }); }
                             is_float = true;
                         }
                         num.push(self.input[self.pos]);
                         self.advance();
                     }
-
-                    if is_float {
+                    let token_type = if is_float {
                         match num.parse() {
-                            Ok(n) => tokens.push(Token::Float(n)),
-                            Err(_) => {
-                                return Err(LexerError {
-                                    message: format!("Invalid float: {}", num),
-                                    line: self.line,
-                                    column: self.column,
-                                })
-                            }
+                            Ok(n) => TokenType::Float(n),
+                            Err(_) => return Err(LexerError { message: format!("Invalid float: {}", num), line: self.line, column: start_col }),
                         }
                     } else {
                         match num.parse() {
-                            Ok(n) => tokens.push(Token::Int(n)),
-                            Err(_) => {
-                                return Err(LexerError {
-                                    message: format!("Invalid integer: {}", num),
-                                    line: self.line,
-                                    column: self.column,
-                                })
-                            }
+                            Ok(n) => TokenType::Int(n),
+                            Err(_) => return Err(LexerError { message: format!("Invalid integer: {}", num), line: self.line, column: start_col }),
                         }
-                    }
-                }
-                _ => {
-                    return Err(LexerError {
-                        message: format!("Unknown character: {}", c),
-                        line: self.line,
-                        column: self.column,
-                    });
-                }
+                    };
+                    tokens.push(Token::new(token_type, self.line, start_col));
+                },
+                _ => return Err(LexerError { message: format!("Unknown character: {}", c), line: self.line, column: start_col }),
             }
         }
 
-        // Emit remaining Dedents
         while indent_stack.len() > 1 {
             indent_stack.pop();
-            tokens.push(Token::Dedent);
+            tokens.push(Token::new(TokenType::Dedent, self.line, self.column));
         }
-
+        tokens.push(Token::new(TokenType::EOF, self.line, self.column));
         Ok(tokens)
     }
 }

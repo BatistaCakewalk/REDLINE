@@ -1,3 +1,7 @@
+//! The Abstract Syntax Tree (AST) for the REDLINE language.
+//! Each node in the tree represents a construct in the code, like a statement or an expression.
+
+/// Represents the fundamental data types in REDLINE.
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Int,
@@ -10,13 +14,14 @@ impl ToString for Type {
     fn to_string(&self) -> String {
         match self {
             Type::Int => "int".to_string(),
-            Type::Float => "double".to_string(), // Mapped to double for better precision and compatibility with rl_math
+            Type::Float => "double".to_string(), // Mapped to double for better precision
             Type::String => "std::string".to_string(),
             Type::Bool => "bool".to_string(),
         }
     }
 }
 
+/// Represents a literal value in the source code.
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     Int(i64),
@@ -25,18 +30,11 @@ pub enum Literal {
     Bool(bool),
 }
 
+/// Represents a binary operator.
 #[derive(Debug, PartialEq, Clone)]
 pub enum BinaryOperator {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Equal,
-    NotEqual,
-    GreaterThan,
-    LessThan,
-    GreaterThanEqual,
-    LessThanEqual,
+    Add, Subtract, Multiply, Divide,
+    Equal, NotEqual, GreaterThan, LessThan, GreaterThanEqual, LessThanEqual,
 }
 
 impl ToString for BinaryOperator {
@@ -56,57 +54,72 @@ impl ToString for BinaryOperator {
     }
 }
 
+/// Represents an expression. An expression is a piece of code that evaluates to a value.
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
+    /// A literal value, e.g., `10`, `"hello"`, `true`.
     Literal(Literal),
+    /// An identifier, e.g., a variable name like `x`.
     Identifier(String),
+    /// A binary operation, e.g., `x + 5`.
     BinaryOp {
         op: BinaryOperator,
         left: Box<Expression>,
         right: Box<Expression>,
     },
+    /// A function call, e.g., `my_func(a, b)`.
     Call(String, Vec<Expression>),
-    Input(Option<String>), // Input can optionally take a prompt string
 }
 
+/// Represents a statement. A statement is a piece of code that performs an action.
 #[derive(Debug, PartialEq, Clone)]
 pub enum Statement {
+    /// A variable or constant declaration, e.g., `var x: int = 10`.
     Declaration {
-        is_mutable: bool, // var vs val
+        is_mutable: bool,
         name: String,
         data_type: Type,
         initializer: Expression,
     },
+    /// An assignment to an existing variable, e.g., `x = 20`.
     Assignment {
         name: String,
         value: Expression,
     },
+    /// An `if-else` statement.
     If {
         condition: Expression,
-        consequence: Vec<Statement>, // 'then' block
-        alternative: Option<Vec<Statement>>, // 'else' block
+        consequence: Vec<Statement>,
+        alternative: Option<Vec<Statement>>,
     },
+    /// A `while` loop.
     While {
         condition: Expression,
         body: Vec<Statement>,
     },
+    /// A `for` loop.
     For {
         iterator: String,
         start: Expression,
         end: Expression,
         body: Vec<Statement>,
     },
+    /// A `print` statement.
     Print(Expression),
-    Expression(Expression), // For standalone function calls
+    /// A standalone expression statement, typically a function call.
+    Expression(Expression),
+    /// A function definition.
     FunctionDefinition {
         name: String,
-        params: Vec<(String, Type)>, // (name, type)
+        params: Vec<(String, Type)>,
         return_type: Type,
         body: Vec<Statement>,
     },
+    /// A `return` statement.
     Return(Option<Expression>),
 }
 
+/// The root of the AST, representing the entire program as a list of statements.
 #[derive(Debug, PartialEq, Clone)]
 pub struct Program {
     pub statements: Vec<Statement>,

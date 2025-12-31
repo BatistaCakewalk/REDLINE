@@ -43,30 +43,10 @@ python redline.py <path_to_file.rl>
 
 **Example:**
 ```bash
-python redline.py examples/hello_world.rl
+python redline.py examples/v0.4_tests/guessing_game.rl
 ```
-
-### Manual Compilation
-If you prefer to run the steps manually:
-1.  **Transpile**: Run the Rust core to generate `output.cpp`.
-    ```bash
-    ./redline-core/target/release/redline-core <file.rl> > output.cpp
-    ```
-2.  **Compile**: Use G++ to create the executable.
-    ```bash
-    g++ output.cpp -o program
-    ```
-3.  **Run**: Execute your program.
-    ```bash
-    ./program
-    ```
 
 ## 📝 Example Code
-
-**Hello World:**
-```redline
-print("Hello, Redline!")
-```
 
 **Fibonacci Sequence:**
 ```redline
@@ -84,6 +64,9 @@ for i in 0..10:
 ```redline
 val name: string = input("What is your name? ")
 print("Welcome, " + name)
+val age_str: string = input("How old are you? ")
+val age: int = to_int(age_str)
+print("You are " + to_string(age) + " years old.")
 ```
 
 ## 🗺️ Roadmap
@@ -92,9 +75,10 @@ print("Welcome, " + name)
 *   [x] Functions & Recursion
 *   [x] Control Flow (`if`, `else`, `while`, `for`)
 *   [x] Standard I/O (`print`, `input`)
+*   [x] Type Conversion (`to_int`, `to_float`, `to_string`)
 *   [ ] Arrays & Lists
-*   [ ] Classes & Structs
 *   [ ] Module System (`import`)
+*   [ ] Classes & Structs
 
 ## 📄 License
 

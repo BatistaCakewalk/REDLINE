@@ -1,9 +1,11 @@
-use crate::lexer::Token;
-use crate::ast::{Program, Statement, Expression, Type, Literal, BinaryOperator}; // Import AST nodes
+use crate::lexer::{Token, TokenType};
+use crate::ast::{Program, Statement, Expression, Type, Literal, BinaryOperator};
 
 #[derive(Debug)]
 pub struct ParserError {
     pub message: String,
+    pub line: usize,
+    pub column: usize,
 }
 
 impl std::fmt::Display for ParserError {
@@ -22,457 +24,286 @@ impl<'a> Parser<'a> {
         Self { tokens, pos: 0 }
     }
 
-    fn current_token(&self) -> Option<&Token> {
-        self.tokens.get(self.pos)
+    fn current_token(&self) -> Token {
+        self.tokens.get(self.pos).cloned().unwrap_or_else(|| Token::new(TokenType::EOF, 0, 0))
     }
 
-    fn peek_token(&self) -> Option<&Token> {
-        self.tokens.get(self.pos + 1)
+    fn peek_token(&self) -> Token {
+        self.tokens.get(self.pos + 1).cloned().unwrap_or_else(|| Token::new(TokenType::EOF, 0, 0))
     }
 
     fn advance(&mut self) {
-        self.pos += 1;
+        if self.pos < self.tokens.len() {
+            self.pos += 1;
+        }
     }
 
-    fn expect(&mut self, expected: &Token, error_msg: &str) -> Result<(), ParserError> {
-        if let Some(token) = self.current_token() {
-            if *token == *expected {
-                self.advance();
-                Ok(())
-            } else {
-                Err(ParserError { message: format!("{}: Expected {:?}, got {:?}", error_msg, expected, token) })
-            }
+    fn error(&self, message: String) -> ParserError {
+        let token = self.current_token();
+        ParserError { message, line: token.line, column: token.column }
+    }
+
+    fn expect(&mut self, expected: TokenType, error_msg: &str) -> Result<(), ParserError> {
+        if self.current_token().token_type == expected {
+            self.advance();
+            Ok(())
         } else {
-            Err(ParserError { message: format!("{}: Expected {:?}, got EOF", error_msg, expected) })
+            Err(self.error(format!("{}: Expected {:?}, got {:?}", error_msg, expected, self.current_token().token_type)))
         }
     }
 
     fn parse_type(&mut self) -> Result<Type, ParserError> {
-        if let Some(Token::Type(ty_str)) = self.current_token() {
+        if let TokenType::Type(ty_str) = &self.current_token().token_type {
             let ty = match ty_str.as_str() {
                 "int" => Type::Int,
                 "float" => Type::Float,
                 "string" => Type::String,
                 "bool" => Type::Bool,
-                _ => return Err(ParserError { message: format!("Unknown type: {}", ty_str) }),
+                _ => return Err(self.error(format!("Unknown type: {}", ty_str))),
             };
             self.advance();
             Ok(ty)
         } else {
-            Err(ParserError { message: format!("Expected type, got {:?}", self.current_token()) })
+            Err(self.error(format!("Expected type, got {:?}", self.current_token().token_type)))
         }
     }
 
-    // Parses primary expressions: literals, identifiers, parenthesized expressions, function calls
     fn parse_expression_primary(&mut self) -> Result<Expression, ParserError> {
-        if let Some(token) = self.current_token() {
-            match token {
-                Token::Int(n) => {
-                    let val = Expression::Literal(Literal::Int(*n));
+        let token = self.current_token();
+        match &token.token_type {
+            TokenType::Int(n) => { self.advance(); Ok(Expression::Literal(Literal::Int(*n))) },
+            TokenType::Float(n) => { self.advance(); Ok(Expression::Literal(Literal::Float(*n))) },
+            TokenType::Str(s) => { self.advance(); Ok(Expression::Literal(Literal::String(s.clone()))) },
+            TokenType::True => { self.advance(); Ok(Expression::Literal(Literal::Bool(true))) },
+            TokenType::False => { self.advance(); Ok(Expression::Literal(Literal::Bool(false))) },
+            TokenType::Ident(name) => {
+                let name = name.clone();
+                self.advance();
+                if self.current_token().token_type == TokenType::LParen {
                     self.advance();
-                    Ok(val)
-                },
-                Token::Float(n) => {
-                    let val = Expression::Literal(Literal::Float(*n));
-                    self.advance();
-                    Ok(val)
-                },
-                Token::Str(s) => {
-                    let val = Expression::Literal(Literal::String(s.clone()));
-                    self.advance();
-                    Ok(val)
-                },
-                Token::True => {
-                    let val = Expression::Literal(Literal::Bool(true));
-                    self.advance();
-                    Ok(val)
-                },
-                Token::False => {
-                    let val = Expression::Literal(Literal::Bool(false));
-                    self.advance();
-                    Ok(val)
-                },
-                Token::Input => {
-                    self.advance(); // Consume 'input'
-                    self.expect(&Token::LParen, "Expected '(' after 'input'")?;
-
-                    let mut prompt = None;
-                    if let Some(Token::Str(s)) = self.current_token() {
-                        prompt = Some(s.clone());
-                        self.advance();
-                    }
-
-                    self.expect(&Token::RParen, "Expected ')' after input arguments")?;
-                    Ok(Expression::Input(prompt))
-                },
-                Token::Ident(name) => {
-                    let name = name.clone();
-                    self.advance(); // Consume identifier
-
-                    // Check if this is a function call
-                    if let Some(Token::LParen) = self.current_token() {
-                        self.advance(); // Consume '('
-
-                        // Parse arguments
-                        let mut args = Vec::new();
-                        if !matches!(self.current_token(), Some(Token::RParen)) {
-                            loop {
-                                args.push(self.parse_expression()?);
-
-                                if let Some(Token::Comma) = self.current_token() {
-                                    self.advance(); // Consume comma and continue
-                                } else {
-                                    break;
-                                }
-                            }
+                    let mut args = Vec::new();
+                    if self.current_token().token_type != TokenType::RParen {
+                        loop {
+                            args.push(self.parse_expression()?);
+                            if self.current_token().token_type != TokenType::Comma { break; }
+                            self.advance();
                         }
-
-                        self.expect(&Token::RParen, "Expected ')' after function arguments")?; // Consume ')'
-
-                        Ok(Expression::Call(name, args))
-                    } else {
-                        Ok(Expression::Identifier(name))
                     }
-                },
-                Token::LParen => {
-                    self.advance(); // Consume '('
-                    let expr = self.parse_expression()?;
-                    self.expect(&Token::RParen, "Expected ')' after parenthesized expression")?;
-                    Ok(expr)
-                },
-                _ => Err(ParserError { message: format!("Expected a primary expression, got {:?}", token) }),
-            }
-        } else {
-            Err(ParserError { message: "Expected a primary expression, got EOF".to_string() })
+                    self.expect(TokenType::RParen, "Expected ')' after function arguments")?;
+                    Ok(Expression::Call(name, args))
+                } else {
+                    Ok(Expression::Identifier(name))
+                }
+            },
+            TokenType::LParen => {
+                self.advance();
+                let expr = self.parse_expression()?;
+                self.expect(TokenType::RParen, "Expected ')' after parenthesized expression")?;
+                Ok(expr)
+            },
+            _ => Err(self.error(format!("Expected a primary expression, got {:?}", token.token_type))),
         }
     }
 
-    // Operator precedence (higher value means higher precedence)
-    fn get_precedence(op_token: &Token) -> u8 {
-        match op_token {
-            Token::Op(op) => match op.as_str() {
+    fn get_precedence(token_type: &TokenType) -> u8 {
+        match token_type {
+            TokenType::Op(op) => match op.as_str() {
                 "*" | "/" => 5,
                 "+" | "-" => 4,
-                "==" | "!=" | ">" | "<" | ">=" | "<=" => 3, // Comparison operators
+                "==" | "!=" | ">" | "<" | ">=" | "<=" => 3,
                 _ => 0,
             },
             _ => 0,
         }
     }
 
-    // Converts a Token::Op to a BinaryOperator enum
-    fn token_to_binary_op(op_token: &Token) -> Result<BinaryOperator, ParserError> {
-        if let Token::Op(op_str) = op_token {
+    fn token_to_binary_op(&self, token_type: &TokenType) -> Result<BinaryOperator, ParserError> {
+        if let TokenType::Op(op_str) = token_type {
             match op_str.as_str() {
-                "+" => Ok(BinaryOperator::Add),
-                "-" => Ok(BinaryOperator::Subtract),
-                "*" => Ok(BinaryOperator::Multiply),
-                "/" => Ok(BinaryOperator::Divide),
-                "==" => Ok(BinaryOperator::Equal),
-                "!=" => Ok(BinaryOperator::NotEqual),
-                ">" => Ok(BinaryOperator::GreaterThan),
-                "<" => Ok(BinaryOperator::LessThan),
-                ">=" => Ok(BinaryOperator::GreaterThanEqual),
-                "<=" => Ok(BinaryOperator::LessThanEqual),
-                _ => Err(ParserError { message: format!("Unknown binary operator: {}", op_str) }),
+                "+" => Ok(BinaryOperator::Add), "-" => Ok(BinaryOperator::Subtract),
+                "*" => Ok(BinaryOperator::Multiply), "/" => Ok(BinaryOperator::Divide),
+                "==" => Ok(BinaryOperator::Equal), "!=" => Ok(BinaryOperator::NotEqual),
+                ">" => Ok(BinaryOperator::GreaterThan), "<" => Ok(BinaryOperator::LessThan),
+                ">=" => Ok(BinaryOperator::GreaterThanEqual), "<=" => Ok(BinaryOperator::LessThanEqual),
+                _ => Err(self.error(format!("Unknown binary operator: {}", op_str))),
             }
         } else {
-            Err(ParserError { message: format!("Expected operator token, got {:?}", op_token) })
+            Err(self.error(format!("Expected operator token, got {:?}", token_type)))
         }
     }
 
-    // Implements precedence climbing algorithm
     fn parse_expression_binop(&mut self, min_precedence: u8) -> Result<Expression, ParserError> {
         let mut left = self.parse_expression_primary()?;
+        while self.current_token().token_type != TokenType::EOF {
+            let precedence = Self::get_precedence(&self.current_token().token_type);
+            if precedence == 0 || precedence < min_precedence { break; }
 
-        while let Some(current_token) = self.current_token() {
-            // Only continue if the current token is an operator
-            let is_operator = matches!(current_token, Token::Op(_));
-            if !is_operator {
-                break;
-            }
+            let op_token = self.current_token();
+            let op = self.token_to_binary_op(&op_token.token_type)?;
+            self.advance();
 
-            let precedence = Self::get_precedence(current_token);
-
-            if precedence == 0 || precedence < min_precedence {
-                break;
-            }
-
-            let op_token = self.current_token().unwrap().clone(); // We know it's an operator
-            let op = Self::token_to_binary_op(&op_token)?;
-            self.advance(); // Consume the operator
-
-            let right = self.parse_expression_binop(precedence + 1)?; // Recursively parse right-hand side with higher precedence
-
-            left = Expression::BinaryOp {
-                op,
-                left: Box::new(left),
-                right: Box::new(right),
-            };
+            let right = self.parse_expression_binop(precedence + 1)?;
+            left = Expression::BinaryOp { op, left: Box::new(left), right: Box::new(right) };
         }
-
         Ok(left)
     }
 
-    // Main entry point for parsing expressions
     fn parse_expression(&mut self) -> Result<Expression, ParserError> {
-        self.parse_expression_binop(0) // Start with the lowest precedence
+        self.parse_expression_binop(0)
     }
 
+    fn parse_block(&mut self) -> Result<Vec<Statement>, ParserError> {
+        self.expect(TokenType::Indent, "Expected indentation at start of block")?;
+        let mut block_statements = Vec::new();
+        while self.current_token().token_type != TokenType::Dedent && self.current_token().token_type != TokenType::EOF {
+            if self.current_token().token_type == TokenType::Newline {
+                self.advance();
+                continue;
+            }
+            block_statements.push(self.parse_statement()?);
+        }
+        self.expect(TokenType::Dedent, "Expected dedent at end of block")?;
+        Ok(block_statements)
+    }
 
     fn parse_declaration(&mut self) -> Result<Statement, ParserError> {
-        let is_mutable = match self.current_token() {
-            Some(Token::Val) => false,
-            Some(Token::Var) => true,
-            _ => return Err(ParserError { message: format!("Expected 'val' or 'var', got {:?}", self.current_token()) }),
+        let is_mutable = match self.current_token().token_type {
+            TokenType::Val => false,
+            TokenType::Var => true,
+            _ => return Err(self.error("Expected 'val' or 'var'".to_string())),
         };
-        self.advance(); // Consume 'val' or 'var'
+        self.advance();
 
-        let name = if let Some(Token::Ident(n)) = self.current_token() {
-            n.clone()
-        } else {
-            return Err(ParserError { message: format!("Expected identifier after var/val, got {:?}", self.current_token()) });
-        };
-        self.advance(); // Consume identifier
+        let name = if let TokenType::Ident(n) = &self.current_token().token_type { n.clone() }
+            else { return Err(self.error("Expected identifier after var/val".to_string())); };
+        self.advance();
 
-        self.expect(&Token::Colon, "Expected ':' after identifier in declaration")?; // Consume ':'
-
-        let data_type = self.parse_type()?; // Consume type
-
-        self.expect(&Token::Assign, "Expected '=' in declaration")?; // Consume '='
-
-        let initializer = self.parse_expression()?; // Consume initializer expression
-
+        self.expect(TokenType::Colon, "Expected ':' after identifier in declaration")?;
+        let data_type = self.parse_type()?;
+        self.expect(TokenType::Assign, "Expected '=' in declaration")?;
+        let initializer = self.parse_expression()?;
         Ok(Statement::Declaration { is_mutable, name, data_type, initializer })
     }
 
-    fn parse_print_statement(&mut self) -> Result<Statement, ParserError> {
-        self.expect(&Token::Print, "Expected 'print'")?; // Consume 'print'
-        self.expect(&Token::LParen, "Expected '(' after 'print'")?; // Consume '('
-
-        let arg = self.parse_expression()?; // Parse the expression argument
-
-        self.expect(&Token::RParen, "Expected ')' after print argument")?; // Consume ')'
-        Ok(Statement::Print(arg))
-    }
-
     fn parse_function_definition(&mut self) -> Result<Statement, ParserError> {
-        self.expect(&Token::Def, "Expected 'def'")?; // Consume 'def'
+        self.expect(TokenType::Def, "Expected 'def'")?;
+        let name = if let TokenType::Ident(n) = &self.current_token().token_type { n.clone() }
+            else { return Err(self.error("Expected function name after 'def'".to_string())); };
+        self.advance();
 
-        let name = if let Some(Token::Ident(n)) = self.current_token() {
-            n.clone()
-        } else {
-            return Err(ParserError { message: format!("Expected function name after 'def', got {:?}", self.current_token()) });
-        };
-        self.advance(); // Consume function name
-
-        self.expect(&Token::LParen, "Expected '(' after function name")?; // Consume '('
-
-        // Parse parameters
+        self.expect(TokenType::LParen, "Expected '(' after function name")?;
         let mut params = Vec::new();
-        if !matches!(self.current_token(), Some(Token::RParen)) {
+        if self.current_token().token_type != TokenType::RParen {
             loop {
-                let param_name = if let Some(Token::Ident(n)) = self.current_token() {
-                    n.clone()
-                } else {
-                    return Err(ParserError { message: format!("Expected parameter name, got {:?}", self.current_token()) });
-                };
-                self.advance(); // Consume parameter name
-
-                self.expect(&Token::Colon, "Expected ':' after parameter name")?; // Consume ':'
-
-                let param_type = self.parse_type()?; // Parse parameter type
-
+                let param_name = if let TokenType::Ident(n) = &self.current_token().token_type { n.clone() }
+                    else { return Err(self.error("Expected parameter name".to_string())); };
+                self.advance();
+                self.expect(TokenType::Colon, "Expected ':' after parameter name")?;
+                let param_type = self.parse_type()?;
                 params.push((param_name, param_type));
-
-                // Check for comma or closing paren
-                if let Some(Token::Comma) = self.current_token() {
-                    self.advance(); // Consume comma and continue
-                } else {
-                    break;
-                }
+                if self.current_token().token_type != TokenType::Comma { break; }
+                self.advance();
             }
         }
-
-        self.expect(&Token::RParen, "Expected ')' after parameters")?; // Consume ')'
-
-        self.expect(&Token::Arrow, "Expected '->' after parameters")?; // Consume '->'
-
-        let return_type = self.parse_type()?; // Parse return type
-
-        self.expect(&Token::Colon, "Expected ':' after return type")?; // Consume ':'
-
-        self.expect(&Token::Newline, "Expected newline after function definition")?; // Consume newline
-
-        let body = self.parse_block()?; // Parse function body
-
+        self.expect(TokenType::RParen, "Expected ')' after parameters")?;
+        self.expect(TokenType::Arrow, "Expected '->' after parameters")?;
+        let return_type = self.parse_type()?;
+        self.expect(TokenType::Colon, "Expected ':' after return type")?;
+        self.expect(TokenType::Newline, "Expected newline after function definition")?;
+        let body = self.parse_block()?;
         Ok(Statement::FunctionDefinition { name, params, return_type, body })
     }
 
-    fn parse_return_statement(&mut self) -> Result<Statement, ParserError> {
-        self.expect(&Token::Return, "Expected 'return'")?; // Consume 'return'
-
-        // Check if there's an expression after return
-        let expr = if matches!(self.current_token(), Some(Token::Newline) | None) {
-            None
-        } else {
-            Some(self.parse_expression()?)
-        };
-
-        Ok(Statement::Return(expr))
-    }
-
     fn parse_if_statement(&mut self) -> Result<Statement, ParserError> {
-        self.expect(&Token::If, "Expected 'if'")?; // Consume 'if'
-
-        let condition = self.parse_expression()?; // Parse condition
-
-        self.expect(&Token::Colon, "Expected ':' after if condition")?; // Consume ':'
-        // Ensure that a newline directly follows the colon
-        self.expect(&Token::Newline, "Expected newline after if colon")?;
-
-        let consequence = self.parse_block()?; // Parse 'then' block
-
+        self.expect(TokenType::If, "Expected 'if'")?;
+        let condition = self.parse_expression()?;
+        self.expect(TokenType::Colon, "Expected ':' after if condition")?;
+        self.expect(TokenType::Newline, "Expected newline after if colon")?;
+        let consequence = self.parse_block()?;
         let mut alternative = None;
-        // Check for 'else'
-        // 'else' token must appear at the same logical indentation level as 'if'
-        // For now, we assume it's directly after the 'if' block concludes.
-        // The parser needs to handle dedent to know a block has ended.
-        // For simplicity, we'll assume a newline and then 'else' means it's part of the same logical block structure.
-        if let Some(Token::Else) = self.current_token() {
-            self.advance(); // Consume 'else'
-            // Optional colon after else
-            if let Some(Token::Colon) = self.current_token() {
-                self.advance();
-            }
-            self.expect(&Token::Newline, "Expected newline after else keyword/colon")?;
-            alternative = Some(self.parse_block()?); // Parse 'else' block
+        if self.current_token().token_type == TokenType::Else {
+            self.advance();
+            if self.current_token().token_type == TokenType::Colon { self.advance(); }
+            self.expect(TokenType::Newline, "Expected newline after else keyword/colon")?;
+            alternative = Some(self.parse_block()?);
         }
-
         Ok(Statement::If { condition, consequence, alternative })
     }
 
     fn parse_while_statement(&mut self) -> Result<Statement, ParserError> {
-        self.expect(&Token::While, "Expected 'while'")?; // Consume 'while'
-
-        let condition = self.parse_expression()?; // Parse condition
-
-        self.expect(&Token::Colon, "Expected ':' after while condition")?; // Consume ':'
-        self.expect(&Token::Newline, "Expected newline after while colon")?;
-
-        let body = self.parse_block()?; // Parse loop body
-
+        self.expect(TokenType::While, "Expected 'while'")?;
+        let condition = self.parse_expression()?;
+        self.expect(TokenType::Colon, "Expected ':' after while condition")?;
+        self.expect(TokenType::Newline, "Expected newline after while colon")?;
+        let body = self.parse_block()?;
         Ok(Statement::While { condition, body })
     }
 
     fn parse_for_statement(&mut self) -> Result<Statement, ParserError> {
-        self.expect(&Token::For, "Expected 'for'")?; // Consume 'for'
-
-        let iterator = if let Some(Token::Ident(n)) = self.current_token() {
-            n.clone()
-        } else {
-            return Err(ParserError { message: format!("Expected iterator name after 'for', got {:?}", self.current_token()) });
-        };
-        self.advance(); // Consume iterator name
-
-        self.expect(&Token::In, "Expected 'in' after iterator")?; // Consume 'in'
-
-        let start = self.parse_expression()?; // Parse start expression
-
-        self.expect(&Token::Range, "Expected '..' range operator")?; // Consume '..'
-
-        let end = self.parse_expression()?; // Parse end expression
-
-        self.expect(&Token::Colon, "Expected ':' after range")?; // Consume ':'
-        self.expect(&Token::Newline, "Expected newline after for colon")?;
-
-        let body = self.parse_block()?; // Parse loop body
-
+        self.expect(TokenType::For, "Expected 'for'")?;
+        let iterator = if let TokenType::Ident(n) = &self.current_token().token_type { n.clone() }
+            else { return Err(self.error("Expected iterator name after 'for'".to_string())); };
+        self.advance();
+        self.expect(TokenType::In, "Expected 'in' after iterator")?;
+        let start = self.parse_expression()?;
+        self.expect(TokenType::Range, "Expected '..' range operator")?;
+        let end = self.parse_expression()?;
+        self.expect(TokenType::Colon, "Expected ':' after range")?;
+        self.expect(TokenType::Newline, "Expected newline after for colon")?;
+        let body = self.parse_block()?;
         Ok(Statement::For { iterator, start, end, body })
     }
 
-    // Parses a block of statements. Assumes that current_token is the first token of the block.
-    // Stops when it encounters a token that is not part of the block's logical flow (e.g., 'else' for 'if' blocks, or EOF)
-    // For now, this is simplified and assumes indentation will be handled implicitly by token stream (e.g., Newline tokens)
-    fn parse_block(&mut self) -> Result<Vec<Statement>, ParserError> {
-        self.expect(&Token::Indent, "Expected indentation at start of block")?;
-        let mut block_statements = Vec::new();
-        loop {
-            // Skip newlines.
-            if let Some(Token::Newline) = self.current_token() {
-                self.advance();
-                continue;
-            }
-
-            // Break conditions for the block
-            if self.current_token().is_none() || matches!(self.current_token(), Some(Token::Dedent)) {
-                break;
-            }
-
-            block_statements.push(self.parse_statement()?);
-        }
-        self.expect(&Token::Dedent, "Expected dedent at end of block")?;
-        Ok(block_statements)
-    }
-
-
     fn parse_statement(&mut self) -> Result<Statement, ParserError> {
-        // Skip leading newlines for cleaner parsing of statements
-        while let Some(Token::Newline) = self.current_token() {
-            self.advance();
-        }
+        while self.current_token().token_type == TokenType::Newline { self.advance(); }
 
-        match self.current_token() {
-            Some(Token::Val) | Some(Token::Var) => self.parse_declaration(),
-            Some(Token::If) => self.parse_if_statement(),
-            Some(Token::While) => self.parse_while_statement(),
-            Some(Token::For) => self.parse_for_statement(),
-            Some(Token::Print) => self.parse_print_statement(),
-            Some(Token::Def) => self.parse_function_definition(),
-            Some(Token::Return) => self.parse_return_statement(),
-            Some(Token::Ident(name)) => {
-                // Could be assignment or expression statement (function call)
-                let name = name.clone();
-                match self.peek_token() {
-                    Some(Token::Assign) => {
-                        self.advance(); // Consume identifier
-                        self.advance(); // Consume '='
+        match &self.current_token().token_type {
+            TokenType::Print => {
+                self.advance(); // Consume 'print'
+                self.expect(TokenType::LParen, "Expected '(' after 'print'")?;
+                let arg = self.parse_expression()?;
+                self.expect(TokenType::RParen, "Expected ')' after print argument")?;
+                Ok(Statement::Print(arg))
+            },
+            TokenType::Val | TokenType::Var => self.parse_declaration(),
+            TokenType::If => self.parse_if_statement(),
+            TokenType::While => self.parse_while_statement(),
+            TokenType::For => self.parse_for_statement(),
+            TokenType::Def => self.parse_function_definition(),
+            TokenType::Return => {
+                self.advance();
+                let expr = if self.current_token().token_type == TokenType::Newline || self.current_token().token_type == TokenType::EOF { None }
+                    else { Some(self.parse_expression()?) };
+                Ok(Statement::Return(expr))
+            },
+            TokenType::Ident(_) => {
+                match &self.peek_token().token_type {
+                    TokenType::Assign => {
+                        let name = if let TokenType::Ident(n) = &self.current_token().token_type { n.clone() } else { unreachable!() };
+                        self.advance();
+                        self.advance();
                         let value = self.parse_expression()?;
                         Ok(Statement::Assignment { name, value })
                     },
                     _ => {
-                        // Assume it's an expression statement (like a function call)
                         let expr = self.parse_expression()?;
                         Ok(Statement::Expression(expr))
                     }
                 }
             },
-            // Other statements will be added here
-            Some(token) => {
-                Err(ParserError { message: format!("Unexpected token at start of statement: {:?}", token) })
-            }
-            None => Err(ParserError { message: "Unexpected EOF while parsing statement".to_string() }),
+            _ => Err(self.error(format!("Unexpected token at start of statement: {:?}", self.current_token().token_type))),
         }
     }
 
     pub fn parse(&mut self) -> Result<Program, ParserError> {
         let mut statements = Vec::new();
-
-        while self.pos < self.tokens.len() {
-            // Skip top-level newlines
-            if let Some(Token::Newline) = self.current_token() {
+        while self.current_token().token_type != TokenType::EOF {
+            if self.current_token().token_type == TokenType::Newline {
                 self.advance();
                 continue;
             }
-
-            // If EOF is reached, break
-            if self.current_token().is_none() {
-                break;
-            }
-
             statements.push(self.parse_statement()?);
         }
-
         Ok(Program { statements })
     }
 }
