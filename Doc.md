@@ -1,4 +1,4 @@
-# 🟥 REDLINE v0.3.2 Documentation
+# 🟥 REDLINE v0.3 Documentation
 
 REDLINE is a high-performance, transpiled systems language designed to be as readable as Python but as fast as C++.
 

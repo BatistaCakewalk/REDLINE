@@ -1,7 +1,7 @@
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Int,
-    Float, // Although not yet fully supported, it's in the docs.
+    Float,
     String,
 }
 
@@ -9,7 +9,7 @@ impl ToString for Type {
     fn to_string(&self) -> String {
         match self {
             Type::Int => "int".to_string(),
-            Type::Float => "float".to_string(),
+            Type::Float => "double".to_string(), // Mapped to double for better precision and compatibility with rl_math
             Type::String => "std::string".to_string(),
         }
     }

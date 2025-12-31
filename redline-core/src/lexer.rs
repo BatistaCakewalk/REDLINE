@@ -5,6 +5,7 @@ pub enum Token {
     Var, Val, Def, Pub, Print, Return, If, Else,
     Ident(String), Int(i64), Float(f64), Str(String), Type(String),
     Op(String), Arrow, Colon, Assign, LParen, RParen, Comma, Newline,
+    Indent, Dedent,
 }
 
 #[derive(Debug)]
@@ -51,7 +52,66 @@ impl Lexer {
 
     pub fn tokenize(&mut self) -> Result<Vec<Token>, LexerError> {
         let mut tokens = Vec::new();
+        let mut indent_stack = vec![0];
+
         while self.pos < self.input.len() {
+            // Handle indentation at the start of a line
+            if self.column == 1 {
+                let mut spaces = 0;
+                let mut lookahead = self.pos;
+                let mut is_empty_line = false;
+
+                while lookahead < self.input.len() {
+                    match self.input[lookahead] {
+                        ' ' => spaces += 1,
+                        '\t' => spaces += 4,
+                        '\n' => {
+                            is_empty_line = true;
+                            break;
+                        }
+                        '\r' => {},
+                        _ => break,
+                    }
+                    lookahead += 1;
+                }
+
+                if is_empty_line {
+                    // Skip whitespace on empty lines
+                    while self.pos < lookahead {
+                        self.advance();
+                    }
+                    // Let the main loop handle the newline
+                } else {
+                    // Handle indentation changes
+                    let last_indent = *indent_stack.last().unwrap();
+                    if spaces > last_indent {
+                        indent_stack.push(spaces);
+                        tokens.push(Token::Indent);
+                    } else if spaces < last_indent {
+                        while spaces < *indent_stack.last().unwrap() {
+                            indent_stack.pop();
+                            tokens.push(Token::Dedent);
+                        }
+                        if spaces != *indent_stack.last().unwrap() {
+                            return Err(LexerError {
+                                message: "Unindent does not match any outer indentation level".to_string(),
+                                line: self.line,
+                                column: self.column,
+                            });
+                        }
+                    }
+
+                    // Consume indentation
+                    while self.pos < lookahead {
+                        self.advance();
+                    }
+                }
+            }
+
+            if self.pos >= self.input.len() {
+                break;
+            }
+
             let c = self.input[self.pos];
             match c {
                 ' ' | '\r' | '\t' => self.advance(),
@@ -118,12 +178,37 @@ impl Lexer {
                 '"' => {
                     self.advance();
                     let mut s = String::new();
-                    while self.pos < self.input.len() && self.input[self.pos] != '"' {
-                        s.push(self.input[self.pos]);
+                    while self.pos < self.input.len() {
+                        if self.input[self.pos] == '"' {
+                            break;
+                        }
+                        if self.input[self.pos] == '\\' {
+                            self.advance();
+                            if self.pos < self.input.len() {
+                                match self.input[self.pos] {
+                                    'n' => s.push('\n'),
+                                    't' => s.push('\t'),
+                                    'r' => s.push('\r'),
+                                    '\\' => s.push('\\'),
+                                    '"' => s.push('"'),
+                                    _ => s.push(self.input[self.pos]),
+                                }
+                            }
+                        } else {
+                            s.push(self.input[self.pos]);
+                        }
                         self.advance();
                     }
-                    tokens.push(Token::Str(s));
-                    self.advance();
+                    if self.pos < self.input.len() && self.input[self.pos] == '"' {
+                        tokens.push(Token::Str(s));
+                        self.advance();
+                    } else {
+                        return Err(LexerError {
+                            message: "Unterminated string literal".to_string(),
+                            line: self.line,
+                            column: self.column,
+                        });
+                    }
                 }
                 _ if c.is_alphabetic() => {
                     let mut ident = String::new();
@@ -146,9 +231,16 @@ impl Lexer {
                         _ => tokens.push(Token::Ident(ident)),
                     }
                 }
-                _ if c.is_numeric() => {
+                _ if c.is_numeric() || c == '.' => {
                     let mut num = String::new();
                     let mut is_float = false;
+
+                    if c == '.' {
+                        is_float = true;
+                        num.push('0');
+                        num.push('.');
+                        self.advance();
+                    }
 
                     while self.pos < self.input.len() && (self.input[self.pos].is_numeric() || self.input[self.pos] == '.') {
                         if self.input[self.pos] == '.' {
@@ -198,6 +290,13 @@ impl Lexer {
                 }
             }
         }
+
+        // Emit remaining Dedents
+        while indent_stack.len() > 1 {
+            indent_stack.pop();
+            tokens.push(Token::Dedent);
+        }
+
         Ok(tokens)
     }
 }

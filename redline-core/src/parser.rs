@@ -332,26 +332,23 @@ impl<'a> Parser<'a> {
     // Stops when it encounters a token that is not part of the block's logical flow (e.g., 'else' for 'if' blocks, or EOF)
     // For now, this is simplified and assumes indentation will be handled implicitly by token stream (e.g., Newline tokens)
     fn parse_block(&mut self) -> Result<Vec<Statement>, ParserError> {
+        self.expect(&Token::Indent, "Expected indentation at start of block")?;
         let mut block_statements = Vec::new();
         loop {
             // Skip newlines.
-            // In an indentation-sensitive language, dedent would be detected here.
-            // For now, we rely on `parse_statement` to skip leading newlines for itself
-            // and `parse` to skip top-level newlines.
-            // This `parse_block` will continue until it hits a non-statement-starting token
-            // or a token that signifies the end of a block (like 'else' for 'if' blocks, or EOF).
             if let Some(Token::Newline) = self.current_token() {
                 self.advance();
                 continue;
             }
 
             // Break conditions for the block
-            if self.current_token().is_none() || matches!(self.current_token(), Some(Token::Else)) {
+            if self.current_token().is_none() || matches!(self.current_token(), Some(Token::Dedent)) {
                 break;
             }
 
             block_statements.push(self.parse_statement()?);
         }
+        self.expect(&Token::Dedent, "Expected dedent at end of block")?;
         Ok(block_statements)
     }
 
