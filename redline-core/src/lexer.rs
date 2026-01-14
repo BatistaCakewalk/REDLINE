@@ -203,7 +203,7 @@ impl Lexer {
                         "true" => TokenType::True, "false" => TokenType::False,
                         "while" => TokenType::While, "for" => TokenType::For, "in" => TokenType::In,
                         "import" => TokenType::Import, "class" => TokenType::Class, "this" => TokenType::This,
-                        "int" | "float" | "string" | "bool" | "list" => TokenType::Type(ident),
+                        "int" | "float" | "string" | "bool" | "list" | "void" => TokenType::Type(ident),
                         _ => TokenType::Ident(ident),
                     };
                     tokens.push(Token::new(token_type, self.line, start_col));

@@ -65,6 +65,7 @@ impl<'a> Parser<'a> {
                     "float" => { self.advance(); Ok(Type::Float) },
                     "string" => { self.advance(); Ok(Type::String) },
                     "bool" => { self.advance(); Ok(Type::Bool) },
+                    "void" => { self.advance(); Ok(Type::Void) },
                     "list" => {
                         self.advance();
                         self.expect(TokenType::LBracket, "Expected '[' after 'list'")?;
@@ -226,7 +227,13 @@ impl<'a> Parser<'a> {
                 }
                 TokenType::Def => {
                     let method = self.parse_function_definition(is_public)?;
-                    members.push(ClassMember::Method(method));
+                    if let Statement::FunctionDefinition { ref name, .. } = method {
+                        if name == "init" {
+                            members.push(ClassMember::Constructor(method));
+                        } else {
+                            members.push(ClassMember::Method(method));
+                        }
+                    }
                 }
                 _ => return Err(self.error("Expected 'val', 'var', or 'def' in class body".to_string())),
             }
@@ -274,9 +281,14 @@ impl<'a> Parser<'a> {
             }
             self.expect(TokenType::RParen, "Expected ')' after parameters")?;
         }
-        self.expect(TokenType::Arrow, "Expected '->' after parameters")?;
-        let return_type = self.parse_type()?;
-        self.expect(TokenType::Colon, "Expected ':' after return type")?;
+
+        let return_type = if self.consume_if(TokenType::Arrow) {
+            self.parse_type()?
+        } else {
+            Type::Void
+        };
+
+        self.expect(TokenType::Colon, "Expected ':' after function signature")?;
         self.expect(TokenType::Newline, "Expected newline after function definition")?;
         let body = self.parse_block()?;
         Ok(Statement::FunctionDefinition { is_public, name, params, return_type, body })

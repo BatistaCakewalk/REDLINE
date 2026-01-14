@@ -8,6 +8,7 @@ output.cpp
 # Ignore the heavy target folder where Rust compiles the "Brain"
 redline-core/target/
 **/*.rs.bk
+build
 
 # --- Python Cache ---
 __pycache__/

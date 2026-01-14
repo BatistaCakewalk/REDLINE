@@ -9,6 +9,7 @@ pub enum Type {
     Float,
     String,
     Bool,
+    Void, // Represents the absence of a return value
     List(Box<Type>),
     Class(String), // Represents a user-defined class type
 }
@@ -20,6 +21,7 @@ impl ToString for Type {
             Type::Float => "double".to_string(),
             Type::String => "std::string".to_string(),
             Type::Bool => "bool".to_string(),
+            Type::Void => "void".to_string(),
             Type::List(inner) => format!("std::vector<{}>", inner.to_string()),
             Type::Class(name) => name.clone(),
         }
@@ -80,6 +82,7 @@ pub enum Expression {
 pub enum ClassMember {
     Variable(Statement), // Using Declaration statement
     Method(Statement),   // Using FunctionDefinition statement
+    Constructor(Statement), // Represents the 'init' method
 }
 
 /// Represents a statement. A statement is a piece of code that performs an action.

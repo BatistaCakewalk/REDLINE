@@ -52,9 +52,16 @@ pub fn generate(program: &Program, mode: GenMode, module_name: &str) -> Result<S
             }
             Statement::Class { name, members } => {
                 for member in members {
-                    if let ClassMember::Method(method_stmt) = member {
-                        cpp_code.push_str(&generate_statement(method_stmt, 0, mode, Some(name))?);
-                        cpp_code.push_str("\n");
+                    match member {
+                        ClassMember::Method(method_stmt) => {
+                            cpp_code.push_str(&generate_statement(method_stmt, 0, mode, Some(name))?);
+                            cpp_code.push_str("\n");
+                        }
+                        ClassMember::Constructor(constructor_stmt) => {
+                            cpp_code.push_str(&generate_statement(constructor_stmt, 0, mode, Some(name))?);
+                            cpp_code.push_str("\n");
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -94,12 +101,17 @@ fn generate_hpp(program: &Program, module_name: &str) -> Result<String, CodegenE
             hpp_code.push_str("public:\n"); // Simplified: all members are public for now
             for member in members {
                 match member {
-                    ClassMember::Variable(Statement::Declaration { name, data_type, .. }) => {
-                        hpp_code.push_str(&format!("    {} {};\n", data_type.to_string(), name));
+                    ClassMember::Variable(Statement::Declaration { name, data_type, initializer, .. }) => {
+                        let initial_value = generate_expression(initializer)?;
+                        hpp_code.push_str(&format!("    {} {} = {};\n", data_type.to_string(), name, initial_value));
                     }
                     ClassMember::Method(Statement::FunctionDefinition { name, params, return_type, .. }) => {
                         let param_str: Vec<String> = params.iter().map(|(n, t)| format!("{} {}", t.to_string(), n)).collect();
                         hpp_code.push_str(&format!("    {} {}({});\n", return_type.to_string(), name, param_str.join(", ")));
+                    }
+                    ClassMember::Constructor(Statement::FunctionDefinition { params, .. }) => {
+                        let param_str: Vec<String> = params.iter().map(|(n, t)| format!("{} {}", t.to_string(), n)).collect();
+                        hpp_code.push_str(&format!("    {}({});\n", name, param_str.join(", ")));
                     }
                     _ => {}
                 }
@@ -138,7 +150,11 @@ fn generate_statement(statement: &Statement, indent_level: usize, mode: GenMode,
             let param_str: Vec<String> = params.iter().map(|(p_name, p_type)| format!("{} {}", p_type.to_string(), p_name)).collect();
             let mut func_def = String::new();
             if let Some(class_name) = class_scope {
-                func_def.push_str(&format!("{} {}::{}({}) {{\n", return_type.to_string(), class_name, name, param_str.join(", ")));
+                if name == "init" {
+                    func_def.push_str(&format!("{}::{}({}) {{\n", class_name, class_name, param_str.join(", ")));
+                } else {
+                    func_def.push_str(&format!("{} {}::{}({}) {{\n", return_type.to_string(), class_name, name, param_str.join(", ")));
+                }
             } else {
                 func_def.push_str(&format!("{} {}({}) {{\n", return_type.to_string(), name, param_str.join(", ")));
             }
@@ -170,7 +186,14 @@ fn generate_expression(expr: &Expression) -> Result<String, CodegenError> {
                 Ok(format!("{}.{}", generate_expression(object)?, name))
             }
         }
-        Expression::Identifier(name) => Ok(name.clone()),
+        Expression::Identifier(name) => {
+            match name.as_str() {
+                "to_string" => Ok("std::to_string".to_string()),
+                "to_int" => Ok("std::stoi".to_string()),
+                "to_float" => Ok("std::stod".to_string()),
+                _ => Ok(name.clone()),
+            }
+        }
         Expression::Call { callee, args } => {
             let callee_str = generate_expression(callee)?;
             let args_str: Result<Vec<String>, _> = args.iter().map(generate_expression).collect();
