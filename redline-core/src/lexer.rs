@@ -3,13 +3,13 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
     // Keywords
-    Var, Val, Def, Pub, Print, Return, If, Else, True, False, While, For, In,
+    Var, Val, Def, Pub, Print, Return, If, Else, True, False, While, For, In, Import, Class, This,
 
     // Literals and Identifiers
     Ident(String), Int(i64), Float(f64), Str(String), Type(String),
 
     // Operators and Punctuation
-    Op(String), Arrow, Colon, Assign, LParen, RParen, LBracket, RBracket, Comma, Newline, Range,
+    Op(String), Arrow, Colon, Assign, LParen, RParen, LBracket, RBracket, Comma, Newline, Range, Dot,
 
     // Indentation
     Indent, Dedent,
@@ -142,7 +142,8 @@ impl Lexer {
                         tokens.push(Token::new(TokenType::Range, self.line, start_col));
                         self.advance(); self.advance();
                     } else {
-                        return Err(LexerError { message: "Unexpected character: .".to_string(), line: self.line, column: start_col });
+                        tokens.push(Token::new(TokenType::Dot, self.line, start_col));
+                        self.advance();
                     }
                 },
                 '>' | '<' | '!' => {
@@ -201,7 +202,8 @@ impl Lexer {
                         "return" => TokenType::Return, "print" => TokenType::Print,
                         "true" => TokenType::True, "false" => TokenType::False,
                         "while" => TokenType::While, "for" => TokenType::For, "in" => TokenType::In,
-                        "int" | "float" | "string" | "bool" | "list" => TokenType::Type(ident),
+                        "import" => TokenType::Import, "class" => TokenType::Class, "this" => TokenType::This,
+                        "int" | "float" | "string" | "bool" | "list" | "void" => TokenType::Type(ident),
                         _ => TokenType::Ident(ident),
                     };
                     tokens.push(Token::new(token_type, self.line, start_col));

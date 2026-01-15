@@ -2,132 +2,185 @@
 import os
 import subprocess
 import sys
+import json
 from pathlib import Path
 
 # --- Constants ---
 PROJECT_ROOT = Path(__file__).parent.resolve()
 CORE_DIR = PROJECT_ROOT / "redline-core"
 CORE_BIN = CORE_DIR / "target" / "release" / "redline-core"
+BUILD_DIR = PROJECT_ROOT / "build"
 
+class Module:
+    """Represents a single REDLINE module (a .rl file)."""
+    def __init__(self, source_path, ast):
+        self.source_path = source_path
+        self.ast = ast
+        self.name = source_path.stem
+        self.cpp_path = BUILD_DIR / f"{self.name}.cpp"
+        self.hpp_path = BUILD_DIR / f"{self.name}.hpp"
 
-def init_core():
-    """Compiles the Rust core and streams its output."""
-    print("---")
-    print("🚀 Initializing REDLINE Core (Rust)...")
-    print(f"   (Running 'cargo build --release' in {CORE_DIR})")
-    print("---")
-    try:
-        # Use Popen to stream output in real-time for better user feedback
-        process = subprocess.Popen(
-            ["cargo", "build", "--release"],
-            cwd=CORE_DIR,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding='utf-8'
-        )
+    def get_imports(self):
+        """Extracts import paths from the module's AST."""
+        imports = []
+        for statement in self.ast.get('statements', []):
+            if 'Import' in statement:
+                imports.append(statement['Import'])
+        return imports
+
+class Compiler:
+    """Orchestrates the compilation of a REDLINE project."""
+
+    def __init__(self, core_bin_path):
+        self.core_bin_path = core_bin_path
+        self.modules = {} # Cache for compiled modules: path -> Module
+
+    def get_ast(self, source_file):
+        """Runs the core parser and returns the AST as a JSON object."""
+        try:
+            result = subprocess.run(
+                [str(self.core_bin_path), str(source_file), "--json-ast"],
+                capture_output=True, text=True, check=True,
+            )
+            return json.loads(result.stdout)
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            print(f"❌ Error parsing {source_file.name}: {e}")
+            if hasattr(e, 'stderr'): print(e.stderr)
+            return None
+
+    def compile_module_recursive(self, source_path):
+        """Recursively compiles a module and its dependencies."""
+        if source_path in self.modules:
+            return self.modules[source_path]
+
+        print(f"   -> Analyzing module: {source_path.name}")
+        ast = self.get_ast(source_path)
+        if not ast:
+            return None
+
+        module = Module(source_path, ast)
+        self.modules[source_path] = module
+
+        for import_path_str in module.get_imports():
+            # Resolve import path relative to the current module's directory
+            import_path = source_path.parent / import_path_str
+            if not self.compile_module_recursive(import_path):
+                return None # Propagate failure
         
-        # Print cargo's output line by line as it comes in
-        for line in iter(process.stdout.readline, ''):
-            sys.stdout.write(f"   {line}")
-        
-        process.wait()  # Wait for the process to complete
-        
-        if process.returncode != 0:
-            print("\n---")
-            print(f"❌ Core initialization failed: Cargo returned non-zero exit status {process.returncode}.")
-            print("---")
+        return module
+
+    def generate_code(self, module, mode):
+        """Generates .cpp or .hpp file for a single module."""
+        output_path = module.cpp_path if mode == "cpp" else module.hpp_path
+        try:
+            result = subprocess.run(
+                [str(self.core_bin_path), str(module.source_path), "--gen", mode],
+                capture_output=True, text=True, check=True,
+            )
+            output_path.write_text(result.stdout)
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Error generating {mode.upper()} for {module.name}:")
+            print(e.stderr)
             return False
 
-        print("\n---")
+def init_core():
+    """Initializes the REDLINE compiler core."""
+    print("---")
+    print("🚀 Initializing REDLINE Core (Rust)...")
+    try:
+        # Using Popen to stream output might be better for user experience
+        subprocess.run(
+            ["cargo", "build", "--release"],
+            cwd=CORE_DIR, check=True, capture_output=True, text=True
+        )
         print("✅ REDLINE Core initialized successfully!")
-        print("---")
         return True
-    except FileNotFoundError:
-        print("❌ Error: 'cargo' command not found. Is Rust installed and in your PATH?")
-        return False
-    except Exception as e:
-        print(f"\n❌ An unexpected error occurred during initialization: {e}")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"❌ Core initialization failed: {e}")
+        if hasattr(e, 'stderr'): print(e.stderr)
         return False
 
+def get_source_file(command_name, args):
+    if len(args) < 3:
+        print(f"❌ Error: Missing file path for '{command_name}' command.")
+        return None
+    source_file = Path(args[2]).resolve()
+    if not source_file.exists() or source_file.suffix != ".rl":
+        print(f"❌ Error: File not found or not a .rl file: {source_file}")
+        return None
+    return source_file
 
 def main():
-    """Main entry point for the script."""
     if len(sys.argv) < 2:
-        print("Usage:")
-        print("  python redline.py build <file.rl>   # Compile a REDLINE file")
-        print("  python redline.py init            # Initialize/Build the compiler core")
+        print("Usage: python redline.py [build|parse|init] ...")
         return
 
     command = sys.argv[1]
 
-    # --- Init Command ---
     if command == "init":
         init_core()
         return
 
-    # --- Build Command ---
-    if command == "build":
-        if len(sys.argv) < 3:
-            print("❌ Error: Missing file path for 'build' command.")
-            print("Usage: python redline.py build <file.rl>")
-            return
-            
-        source_file_path = sys.argv[2]
-        source_file = Path(source_file_path).resolve()
-
-        if not source_file.exists() or source_file.suffix != ".rl":
-            print(f"❌ Error: File not found or not a .rl file: {source_file}")
-            return
-
-        # Check for core binary and build if it's missing
-        if not CORE_BIN.exists():
-            print(f"⚠️ REDLINE Core binary not found. Running 'init' first...")
-            if not init_core():
-                print("\n❌ Aborting build due to core initialization failure.")
-                return
-            print("\n✅ Core initialized. Continuing with build...")
-
-        cpp_output = PROJECT_ROOT / "output.cpp"
-        exe_output = PROJECT_ROOT / source_file.stem
-
-        try:
-            # Step 1: Run the Rust Core (Source .rl -> C++ code)
-            print(f"\n[1/2] 🧠 REDLINE Core parsing: {source_file.name}")
-            with open(cpp_output, "w") as f:
-                subprocess.run([str(CORE_BIN), str(source_file)], stdout=f, check=True, text=True)
-
-            # Step 2: Compile with G++
-            print(f"[2/2] 🛠️  G++ compiling: {exe_output.name}")
-            subprocess.run(
-                [
-                    "g++",
-                    "-std=c++11",
-                    str(cpp_output),
-                    "-o",
-                    str(exe_output),
-                    f"-I{PROJECT_ROOT}",  # This helps find the stdlib
-                ],
-                check=True,
-            )
-
-            print(f"\n🚀 Success! Compiled to: ./{exe_output.name}")
-
-            # Optional: Clean up the temp .cpp file
-            # cpp_output.unlink()
-
-        except subprocess.CalledProcessError as e:
-            print(f"\n❌ Build Failed: {e}")
-        except Exception as e:
-            print(f"\n❌ An unexpected error occurred: {e}")
+    if command not in ["build", "parse"]:
+        print(f"❌ Error: Unknown command '{command}'")
         return
 
-    # --- Unknown Command ---
-    print(f"❌ Error: Unknown command '{command}'")
-    print("Usage:")
-    print("  python redline.py build <file.rl>   # Compile a REDLINE file")
-    print("  python redline.py init            # Initialize/Build the compiler core")
+    if not CORE_BIN.exists():
+        print("⚠️ REDLINE Core binary not found. Running 'init' first...")
+        if not init_core():
+            print("\n❌ Aborting due to core initialization failure.")
+            return
+        print("\n✅ Core initialized. Continuing...")
 
+    source_file = get_source_file(command, sys.argv)
+    if not source_file: return
+
+    compiler = Compiler(CORE_BIN)
+    BUILD_DIR.mkdir(exist_ok=True)
+
+    print(f"🚀 Starting build for entry point: {source_file.name}")
+    main_module = compiler.compile_module_recursive(source_file)
+
+    if not main_module:
+        print("\n❌ Build failed during module analysis.")
+        return
+
+    all_modules = list(compiler.modules.values())
+    
+    print("\n[1/2] 🧠 Generating C++ code...")
+    for module in all_modules:
+        print(f"   -> Generating {module.name}.hpp")
+        if not compiler.generate_code(module, "hpp"):
+            print("\n❌ Build failed during C++ header generation.")
+            return
+        print(f"   -> Generating {module.name}.cpp")
+        if not compiler.generate_code(module, "cpp"):
+            print("\n❌ Build failed during C++ source generation.")
+            return
+
+    if command == "parse":
+        print(f"\n✅ Success! C++ output generated in: {BUILD_DIR}")
+        return
+
+    if command == "build":
+        exe_output = PROJECT_ROOT / source_file.stem
+        cpp_files = [m.cpp_path for m in all_modules]
+
+        print(f"\n[2/2] 🛠️  G++ compiling and linking...")
+        try:
+            cmd = ["g++", "-std=c++11", *cpp_files, "-o", str(exe_output), f"-I{BUILD_DIR}", f"-I{PROJECT_ROOT}"]
+            print(f"   > {' '.join(map(str, cmd))}")
+            subprocess.run(cmd, check=True)
+            print(f"\n🚀 Success! Compiled to: ./{exe_output.name}")
+        except subprocess.CalledProcessError as e:
+            print(f"\n❌ G++ compilation failed: {e}")
+        finally:
+            # Clean up build directory
+            # You might want to keep them for debugging
+            # for p in BUILD_DIR.glob('*'): p.unlink()
+            # BUILD_DIR.rmdir()
+            pass
 
 if __name__ == "__main__":
     main()

@@ -1,14 +1,17 @@
 //! The Abstract Syntax Tree (AST) for the REDLINE language.
 //! Each node in the tree represents a construct in the code, like a statement or an expression.
+use serde::Serialize;
 
 /// Represents the fundamental data types in REDLINE.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
 pub enum Type {
     Int,
     Float,
     String,
     Bool,
+    Void, // Represents the absence of a return value
     List(Box<Type>),
+    Class(String), // Represents a user-defined class type
 }
 
 impl ToString for Type {
@@ -18,13 +21,15 @@ impl ToString for Type {
             Type::Float => "double".to_string(),
             Type::String => "std::string".to_string(),
             Type::Bool => "bool".to_string(),
+            Type::Void => "void".to_string(),
             Type::List(inner) => format!("std::vector<{}>", inner.to_string()),
+            Type::Class(name) => name.clone(),
         }
     }
 }
 
 /// Represents a literal value in the source code.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
 pub enum Literal {
     Int(i64),
     Float(f64),
@@ -33,7 +38,7 @@ pub enum Literal {
 }
 
 /// Represents a binary operator.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
 pub enum BinaryOperator {
     Add, Subtract, Multiply, Divide,
     Equal, NotEqual, GreaterThan, LessThan, GreaterThanEqual, LessThanEqual,
@@ -57,79 +62,48 @@ impl ToString for BinaryOperator {
 }
 
 /// Represents an expression. An expression is a piece of code that evaluates to a value.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
 pub enum Expression {
-    /// A literal value, e.g., `10`, `"hello"`, `true`.
     Literal(Literal),
-    /// A list literal, e.g., `[1, 2, 3]`.
     ListLiteral(Vec<Expression>),
-    /// An identifier, e.g., a variable name like `x`.
     Identifier(String),
-    /// A binary operation, e.g., `x + 5`.
-    BinaryOp {
-        op: BinaryOperator,
-        left: Box<Expression>,
-        right: Box<Expression>,
-    },
-    /// A function call, e.g., `my_func(a, b)`.
-    Call(String, Vec<Expression>),
-    /// An index access expression, e.g., `my_list[0]`.
-    Index {
-        list: Box<Expression>,
-        index: Box<Expression>,
-    },
+    BinaryOp { op: BinaryOperator, left: Box<Expression>, right: Box<Expression> },
+    /// A function or method call. `callee` is the expression being called.
+    Call { callee: Box<Expression>, args: Vec<Expression> },
+    Index { list: Box<Expression>, index: Box<Expression> },
+    /// Member access, e.g., `my_object.member`.
+    Get { object: Box<Expression>, name: String },
+    /// The `this` keyword.
+    This,
+}
+
+/// Represents a single member of a class (either a variable or a function).
+#[derive(Debug, PartialEq, Clone, Serialize)]
+pub enum ClassMember {
+    Variable(Statement), // Using Declaration statement
+    Method(Statement),   // Using FunctionDefinition statement
+    Constructor(Statement), // Represents the 'init' method
 }
 
 /// Represents a statement. A statement is a piece of code that performs an action.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
 pub enum Statement {
-    /// A variable or constant declaration, e.g., `var x: int = 10`.
-    Declaration {
-        is_mutable: bool,
-        name: String,
-        data_type: Type,
-        initializer: Expression,
-    },
-    /// An assignment to an existing variable or element, e.g., `x = 20` or `my_list[0] = 1`.
-    Assignment {
-        target: Expression,
-        value: Expression,
-    },
-    /// An `if-else` statement.
-    If {
-        condition: Expression,
-        consequence: Vec<Statement>,
-        alternative: Option<Vec<Statement>>,
-    },
-    /// A `while` loop.
-    While {
-        condition: Expression,
-        body: Vec<Statement>,
-    },
-    /// A `for` loop.
-    For {
-        iterator: String,
-        start: Expression,
-        end: Expression,
-        body: Vec<Statement>,
-    },
-    /// A `print` statement.
+    Import(String),
+    Declaration { is_public: bool, is_mutable: bool, name: String, data_type: Type, initializer: Expression },
+    Assignment { target: Expression, value: Expression },
+    If { condition: Expression, consequence: Vec<Statement>, alternative: Option<Vec<Statement>> },
+    While { condition: Expression, body: Vec<Statement> },
+    For { iterator: String, start: Expression, end: Expression, body: Vec<Statement> },
     Print(Expression),
-    /// A standalone expression statement, typically a function call.
     Expression(Expression),
-    /// A function definition.
-    FunctionDefinition {
-        name: String,
-        params: Vec<(String, Type)>,
-        return_type: Type,
-        body: Vec<Statement>,
-    },
-    /// A `return` statement.
+    FunctionDefinition { is_public: bool, name: String, params: Vec<(String, Type)>, return_type: Type, body: Vec<Statement> },
     Return(Option<Expression>),
+    /// A class definition.
+    Class { name: String, members: Vec<ClassMember> },
 }
 
 /// The root of the AST, representing the entire program as a list of statements.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
 pub struct Program {
     pub statements: Vec<Statement>,
 }
