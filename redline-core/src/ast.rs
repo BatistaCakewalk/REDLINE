@@ -100,6 +100,8 @@ pub enum Statement {
     Return(Option<Expression>),
     /// A class definition.
     Class { is_public: bool, name: String, members: Vec<ClassMember> },
+    /// A try-catch block.
+    TryCatch { try_block: Vec<Statement>, catch_var: String, catch_block: Vec<Statement> },
 }
 
 /// The root of the AST, representing the entire program as a list of statements.

@@ -355,12 +355,34 @@ impl<'a> Parser<'a> {
         Ok(Statement::Class { is_public, name, members })
     }
 
+    fn parse_try_catch_statement(&mut self) -> Result<Statement, ParserError> {
+        self.expect(TokenType::Try, "Expected 'try'")?;
+        self.expect(TokenType::Colon, "Expected ':' after 'try'")?;
+        self.expect(TokenType::Newline, "Expected newline after 'try:'")?;
+        let try_block = self.parse_block()?;
+
+        self.expect(TokenType::Catch, "Expected 'catch'")?;
+        let catch_var = if let TokenType::Ident(name) = &self.current_token().token_type {
+            let name = name.clone();
+            self.advance();
+            name
+        } else {
+            return Err(self.error("Expected identifier for catch variable".to_string()));
+        };
+        self.expect(TokenType::Colon, "Expected ':' after catch variable")?;
+        self.expect(TokenType::Newline, "Expected newline after 'catch ...:'")?;
+        let catch_block = self.parse_block()?;
+
+        Ok(Statement::TryCatch { try_block, catch_var, catch_block })
+    }
+
     fn parse_statement(&mut self) -> Result<Statement, ParserError> {
         while self.consume_if(TokenType::Newline) {}
 
         match self.current_token().token_type {
             TokenType::Import => self.parse_import_statement(),
             TokenType::Class => self.parse_class_statement(false),
+            TokenType::Try => self.parse_try_catch_statement(),
             TokenType::Print => {
                 self.advance();
                 self.expect(TokenType::LParen, "Expected '(' after 'print'")?;
