@@ -1,4 +1,4 @@
-use crate::ast::{Program, Statement, Expression, Literal, ClassMember};
+use crate::ast::{Program, Statement, Expression, Literal, ClassMember, Type};
 use std::fmt;
 use std::path::Path;
 
@@ -33,6 +33,7 @@ pub fn generate(program: &Program, mode: GenMode, module_name: &str) -> Result<S
     if has_main {
         includes.push_str("#include <iostream>\n");
     }
+    includes.push_str("#include <memory>\n"); // For std::shared_ptr
     includes.push_str(&format!("#include \"{}.hpp\"\n", module_name));
     for stmt in &program.statements {
         if let Statement::Import(path) = stmt {
@@ -89,6 +90,7 @@ fn generate_hpp(program: &Program, module_name: &str) -> Result<String, CodegenE
     let guard = format!("RL_{}_H", module_name.to_uppercase());
 
     hpp_code.push_str(&format!("#ifndef {}\n#define {}\n\n", guard, guard));
+    hpp_code.push_str("#include <memory>\n"); // For std::shared_ptr
     hpp_code.push_str("#include \"stdlib/rl_io.hpp\"\n");
     hpp_code.push_str("#include \"stdlib/rl_math.hpp\"\n");
     hpp_code.push_str("#include \"stdlib/rl_stdlib.hpp\"\n");
@@ -145,7 +147,11 @@ fn generate_statement(statement: &Statement, indent_level: usize, mode: GenMode,
     let indent = "    ".repeat(indent_level);
     match statement {
         Statement::Declaration { name, data_type, initializer, .. } => {
-            Ok(format!("{}{} {} = {};\n", indent, data_type.to_string(), name, generate_expression(initializer)?))
+            let type_str = match data_type {
+                Type::Class(class_name) => format!("std::shared_ptr<{}>", class_name),
+                _ => data_type.to_string(),
+            };
+            Ok(format!("{}{} {} = {};\n", indent, type_str, name, generate_expression(initializer)?))
         },
         Statement::FunctionDefinition { name, params, return_type, body, .. } => {
             let param_str: Vec<String> = params.iter().map(|(p_name, p_type)| format!("{} {}", p_type.to_string(), p_name)).collect();
@@ -214,13 +220,13 @@ fn generate_statement(statement: &Statement, indent_level: usize, mode: GenMode,
 
 fn generate_expression(expr: &Expression) -> Result<String, CodegenError> {
     match expr {
+        Expression::New { class_name, args } => {
+            let args_str: Result<Vec<String>, _> = args.iter().map(generate_expression).collect();
+            Ok(format!("std::make_shared<{}>({})", class_name, args_str?.join(", ")))
+        },
         Expression::This => Ok("this".to_string()),
         Expression::Get { object, name } => {
-            if let Expression::This = **object {
-                Ok(format!("this->{}", name))
-            } else {
-                Ok(format!("{}.{}", generate_expression(object)?, name))
-            }
+            Ok(format!("{}->{}", generate_expression(object)?, name))
         }
         Expression::Identifier(name) => {
             match name.as_str() {

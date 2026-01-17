@@ -88,6 +88,25 @@ impl<'a> Parser<'a> {
     fn parse_expression_primary(&mut self) -> Result<Expression, ParserError> {
         let token = self.current_token();
         let mut expr = match &token.token_type {
+            TokenType::New => {
+                self.advance();
+                if let TokenType::Ident(class_name) = self.current_token().token_type {
+                    let class_name = class_name.clone();
+                    self.advance();
+                    self.expect(TokenType::LParen, "Expected '(' after class name in new expression")?;
+                    let mut args = Vec::new();
+                    if !self.consume_if(TokenType::RParen) {
+                        loop {
+                            args.push(self.parse_expression()?);
+                            if !self.consume_if(TokenType::Comma) { break; }
+                        }
+                        self.expect(TokenType::RParen, "Expected ')' after new expression arguments")?;
+                    }
+                    Ok(Expression::New { class_name, args })
+                } else {
+                    Err(self.error("Expected class name after 'new'".to_string()))
+                }
+            },
             TokenType::This => { self.advance(); Ok(Expression::This) },
             TokenType::Int(n) => { self.advance(); Ok(Expression::Literal(Literal::Int(*n))) },
             TokenType::Float(n) => { self.advance(); Ok(Expression::Literal(Literal::Float(*n))) },

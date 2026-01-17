@@ -22,8 +22,15 @@ impl ToString for Type {
             Type::String => "std::string".to_string(),
             Type::Bool => "bool".to_string(),
             Type::Void => "void".to_string(),
-            Type::List(inner) => format!("std::vector<{}>", inner.to_string()),
-            Type::Class(name) => name.clone(),
+            Type::List(inner) => {
+                // If the list contains class objects, it's a list of smart pointers.
+                if let Type::Class(class_name) = &**inner {
+                    format!("std::vector<std::shared_ptr<{}>>", class_name)
+                } else {
+                    format!("std::vector<{}>", inner.to_string())
+                }
+            },
+            Type::Class(name) => format!("std::shared_ptr<{}>", name),
         }
     }
 }
@@ -75,6 +82,8 @@ pub enum Expression {
     Get { object: Box<Expression>, name: String },
     /// The `this` keyword.
     This,
+    /// Heap allocation, e.g., `new MyClass()`.
+    New { class_name: String, args: Vec<Expression> },
 }
 
 /// Represents a single member of a class (either a variable or a function).
