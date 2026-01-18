@@ -6,6 +6,9 @@
 #include <algorithm> // For sort, reverse, find
 
 namespace rl {
+    // Global command line arguments
+    extern std::vector<std::string> args;
+
     // Returns the number of elements in a vector.
     template<typename T>
     int len(const std::vector<T>& vec) {
@@ -41,6 +44,28 @@ namespace rl {
             return std::distance(vec.begin(), it);
         }
         return -1;
+    }
+
+    // --- Type Conversion Helpers ---
+
+    // Identity function for strings.
+    inline std::string to_string(const std::string& s) {
+        return s;
+    }
+
+    // Wrapper for std::to_string (int)
+    inline std::string to_string(int val) {
+        return std::to_string(val);
+    }
+
+    // Wrapper for std::to_string (double)
+    inline std::string to_string(double val) {
+        return std::to_string(val);
+    }
+
+    // Wrapper for std::to_string (bool)
+    inline std::string to_string(bool val) {
+        return val ? "true" : "false";
     }
 }
 

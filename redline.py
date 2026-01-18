@@ -4,14 +4,19 @@ import subprocess
 import sys
 import json
 import re
+import shutil
 from pathlib import Path
+try:
+    import tomllib
+except ImportError:
+    import toml as tomllib
 
 # --- Constants ---
-VERSION = "0.9.0"
+VERSION = "1.0.0"
 PROJECT_ROOT = Path(__file__).parent.resolve()
 CORE_DIR = PROJECT_ROOT / "redline-core"
 CORE_BIN = CORE_DIR / "target" / "release" / "redline-core"
-BUILD_DIR = PROJECT_ROOT / "build"
+BUILD_DIR = PROJECT_ROOT / "temp_build" # Changed from "build"
 
 ASCII_ART = r"""
 ██████╗ ███████╗██████╗ ██╗     ██╗███╗   ██╗███████╗
@@ -31,7 +36,7 @@ def print_usage():
     print("\nUsage:")
     print("  python redline.py <command> [arguments]")
     print("\nCommands:")
-    print("  build <file>    Compile a REDLINE (.rl) or C++ (.cpp) file.")
+    print("  build [file]    Compile a REDLINE project or a single file.")
     print("  parse <file.rl> Generate C++ code from a REDLINE file without compiling.")
     print("  lib <file.rl>   Compile a REDLINE file into a static library (.o).")
     print("  test            Run all tests in a local 'tests/' directory.")
@@ -126,84 +131,15 @@ def init_core():
         if hasattr(e, 'stderr'): print(e.stderr, file=sys.stderr)
         return False
 
-def get_source_file(command_name, args):
-    if len(args) < 3:
-        print(f"Error: Missing file path for '{command_name}' command.")
-        print(f"Usage: python redline.py {command_name} <file>")
-        return None
-    
-    file_path = Path(args[2])
-    if not file_path.is_absolute():
-        file_path = Path.cwd() / file_path
-    
-    if not file_path.exists():
-        print(f"Error: File not found: {file_path}")
-        return None
-    return file_path
-
-def run_tests():
-    """Discovers and runs all tests."""
-    print("Running tests...")
-    test_dir = Path.cwd() / "tests"
-    if not test_dir.exists():
-        print("No 'tests' directory found.")
-        return
-
-    test_files = list(test_dir.rglob("*.rl"))
-    
-    if not test_files:
-        print("No tests found in 'tests/' directory.")
-        return
-
-    passed = 0
-    failed = 0
-
-    for test_file in test_files:
-        print(f"--- Running: {test_file.relative_to(Path.cwd())} ---")
-        
-        compiler = Compiler(CORE_BIN)
-        BUILD_DIR.mkdir(exist_ok=True)
-
-        main_module = compiler.compile_module_recursive(test_file)
-        if not main_module:
-            print("🔴 FAILED (Module Analysis)")
-            failed += 1
-            continue
-
-        all_modules = list(compiler.modules.values())
-        
-        for module in all_modules:
-            if not compiler.generate_code(module, "hpp") or not compiler.generate_code(module, "cpp"):
-                print("🔴 FAILED (Code Generation)")
-                failed += 1
-                continue
-        
-        exe_output = BUILD_DIR / test_file.stem
-        cpp_files = [m.cpp_path for m in all_modules]
-
-        try:
-            cmd = ["g++", "-std=c++11", *cpp_files, "-o", str(exe_output), f"-I{BUILD_DIR}", f"-I{PROJECT_ROOT}"]
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-            
-            run_result = subprocess.run([str(exe_output)], check=True, capture_output=True, text=True)
-            print(run_result.stdout.strip())
-            print("🟢 PASSED")
-            passed += 1
-
-        except subprocess.CalledProcessError as e:
-            print("🔴 FAILED (Compilation or Runtime)")
-            print(e.stderr, file=sys.stderr)
-            failed += 1
-        
-        print("-" * (len(str(test_file.relative_to(Path.cwd()))) + 14))
-
-    print("\n--- Test Summary ---")
-    print(f"Passed: {passed}")
-    print(f"Failed: {failed}")
-    print("--------------------")
-    
-    if failed > 0:
-        sys.exit(1)
+def find_config(start_path):
+    """Searches upward from a path for a RedConfig.toml file."""
+    current_path = start_path.resolve()
+    while current_path != current_path.parent:
+        config_file = current_path / "RedConfig.toml"
+        if config_file.exists():
+            return config_file
+        current_path = current_path.parent
+    return None
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] == 'help':
@@ -215,15 +151,6 @@ def main():
     if command == "init":
         init_core()
         return
-        
-    if command == "test":
-        run_tests()
-        return
-
-    if command not in ["build", "parse", "lib"]:
-        print(f"Error: Unknown command '{command}'")
-        print_usage()
-        return
 
     if not CORE_BIN.exists():
         print("REDLINE Core binary not found. Running 'init' first...")
@@ -232,105 +159,113 @@ def main():
             return
         print("Core initialized. Continuing...")
 
-    source_file = get_source_file(command, sys.argv)
-    if not source_file: return
+    source_file = None
+    project_name = None
+    output_dir = None
+    
+    # Determine build mode (file vs. config)
+    if command == "build" and len(sys.argv) < 3:
+        # Config-based build from current directory
+        config_path = Path.cwd() / "RedConfig.toml"
+        if not config_path.exists():
+            print("Error: No input file specified and no RedConfig.toml found in current directory.")
+            print_usage()
+            return
+    else:
+        # File-based build, potentially with config lookup
+        file_arg = sys.argv[2] if len(sys.argv) >= 3 else None
+        if not file_arg:
+            print(f"Error: Missing file path for '{command}' command.")
+            print_usage()
+            return
+        
+        source_file = Path(file_arg)
+        if not source_file.is_absolute():
+            source_file = Path.cwd() / source_file
+        
+        if not source_file.exists():
+            print(f"Error: File not found: {source_file}")
+            return
+            
+        config_path = find_config(source_file.parent)
+
+    if config_path:
+        print(f"Found RedConfig.toml at: {config_path}")
+        with open(config_path, "rb") as f:
+            config = tomllib.load(f)
+        
+        project_config = config.get("project", {})
+        project_name = project_config.get("name", "a.out")
+        entry_point_str = project_config.get("entry_point")
+        output_dir_str = project_config.get("output_dir", ".")
+        
+        if not entry_point_str:
+            print("Error: RedConfig.toml is missing 'entry_point'.")
+            return
+        
+        project_root = config_path.parent
+        source_file = (project_root / entry_point_str).resolve()
+        output_dir = (project_root / output_dir_str).resolve()
+        output_dir.mkdir(exist_ok=True)
+    else:
+        if not source_file:
+            print("Error: No source file specified and no RedConfig.toml found.")
+            return
+        project_name = source_file.stem
+        output_dir = source_file.parent
 
     compiler = Compiler(CORE_BIN)
     BUILD_DIR.mkdir(exist_ok=True)
 
-    if command == "build" and source_file.suffix == ".cpp":
-        print(f"Starting C++ Interop build for: {source_file.name}")
-        
-        content = source_file.read_text()
-        includes = re.findall(r'#include\s+"([^"]+)\.hpp"', content)
-        
-        for inc in includes:
-            rl_path = source_file.parent / f"{inc}.rl"
-            if rl_path.exists():
-                print(f"  -> Detected REDLINE dependency: {rl_path.name}")
-                if not compiler.compile_module_recursive(rl_path):
-                    print(f"Failed to compile dependency: {rl_path.name}")
-                    return
+    try:
+        print(f"Starting build for entry point: {source_file.name}")
+        main_module = compiler.compile_module_recursive(source_file)
+
+        if not main_module:
+            print("Build failed during module analysis.")
+            return
 
         all_modules = list(compiler.modules.values())
-        if all_modules:
-            print("Compiling REDLINE dependencies...")
+        
+        print("Generating C++ code...")
+        for module in all_modules:
+            if not compiler.generate_code(module, "hpp") or not compiler.generate_code(module, "cpp"):
+                return
+
+        if command == "parse":
+            print(f"C++ output generated in: {BUILD_DIR}")
+            return
+
+        if command == "lib":
+            print("Compiling object files...")
             for module in all_modules:
-                if not compiler.generate_code(module, "hpp") or not compiler.generate_code(module, "cpp"):
-                    return
-                
                 print(f"  -> Compiling {module.name}.o")
                 try:
                     subprocess.run(
-                        ["g++", "-std=c++11", "-c", str(module.cpp_path), "-o", str(module.obj_path), f"-I{BUILD_DIR}", f"-I{PROJECT_ROOT}"],
+                        ["g++", "-std=c++17", "-c", str(module.cpp_path), "-o", str(module.obj_path), f"-I{BUILD_DIR}", f"-I{PROJECT_ROOT}"],
                         check=True
                     )
                 except subprocess.CalledProcessError as e:
                     print(f"Compilation failed for {module.name}: {e}")
                     return
-
-        exe_output = PROJECT_ROOT / source_file.stem
-        obj_files = [str(m.obj_path) for m in all_modules]
-        
-        print("Compiling and linking C++ application...")
-        try:
-            cmd = ["g++", "-std=c++11", str(source_file), *obj_files, "-o", str(exe_output), f"-I{BUILD_DIR}", f"-I{PROJECT_ROOT}"]
-            subprocess.run(cmd, check=True)
-            print(f"Build successful. Executable created at: ./{exe_output.name}")
-        except subprocess.CalledProcessError as e:
-            print(f"G++ compilation failed: {e}")
-        return
-
-    if source_file.suffix != ".rl":
-        print(f"Error: Expected a .rl file for this command, but got: {source_file.suffix}")
-        return
-
-    print(f"Starting build for entry point: {source_file.name}")
-    main_module = compiler.compile_module_recursive(source_file)
-
-    if not main_module:
-        print("Build failed during module analysis.")
-        return
-
-    all_modules = list(compiler.modules.values())
-
-    print("Generating C++ code...")
-    for module in all_modules:
-        if not compiler.generate_code(module, "hpp") or not compiler.generate_code(module, "cpp"):
+            print(f"Library object files generated in: {BUILD_DIR}")
             return
 
-    if command == "parse":
-        print(f"C++ output generated in: {BUILD_DIR}")
-        return
+        if command == "build":
+            exe_output = output_dir / project_name
+            cpp_files = [m.cpp_path for m in all_modules]
 
-    if command == "lib":
-        print("Compiling object files...")
-        for module in all_modules:
-            print(f"  -> Compiling {module.name}.o")
+            print("Compiling and linking...")
             try:
-                subprocess.run(
-                    ["g++", "-std=c++11", "-c", str(module.cpp_path), "-o", str(module.obj_path), f"-I{BUILD_DIR}", f"-I{PROJECT_ROOT}"],
-                    check=True
-                )
+                cmd = ["g++", "-std=c++17", *cpp_files, "-o", str(exe_output), f"-I{BUILD_DIR}", f"-I{PROJECT_ROOT}"]
+                subprocess.run(cmd, check=True)
+                print(f"Build successful. Executable created at: {exe_output}")
             except subprocess.CalledProcessError as e:
-                print(f"Compilation failed for {module.name}: {e}")
-                return
-        print(f"Library object files generated in: {BUILD_DIR}")
-        return
-
-    if command == "build":
-        exe_output = PROJECT_ROOT / source_file.stem
-        cpp_files = [m.cpp_path for m in all_modules]
-
-        print("Compiling and linking...")
-        try:
-            cmd = ["g++", "-std=c++11", *cpp_files, "-o", str(exe_output), f"-I{BUILD_DIR}", f"-I{PROJECT_ROOT}"]
-            subprocess.run(cmd, check=True)
-            print(f"Build successful. Executable created at: ./{exe_output.name}")
-        except subprocess.CalledProcessError as e:
-            print(f"G++ compilation failed: {e}")
-        finally:
-            pass
+                print(f"G++ compilation failed: {e}")
+    finally:
+        if BUILD_DIR.exists():
+            shutil.rmtree(BUILD_DIR)
+            print("Temporary build directory cleaned up.")
 
 if __name__ == "__main__":
     main()

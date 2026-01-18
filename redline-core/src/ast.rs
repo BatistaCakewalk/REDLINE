@@ -11,6 +11,7 @@ pub enum Type {
     Bool,
     Void, // Represents the absence of a return value
     List(Box<Type>),
+    Dict(Box<Type>, Box<Type>), // Dictionary type: dict[Key, Value]
     Class(String), // Represents a user-defined class type
 }
 
@@ -30,6 +31,7 @@ impl ToString for Type {
                     format!("std::vector<{}>", inner.to_string())
                 }
             },
+            Type::Dict(key, value) => format!("std::map<{}, {}>", key.to_string(), value.to_string()),
             Type::Class(name) => format!("std::shared_ptr<{}>", name),
         }
     }
@@ -73,6 +75,7 @@ impl ToString for BinaryOperator {
 pub enum Expression {
     Literal(Literal),
     ListLiteral(Vec<Expression>),
+    DictLiteral(Vec<(Expression, Expression)>), // Dictionary literal: { key: value, ... }
     Identifier(String),
     BinaryOp { op: BinaryOperator, left: Box<Expression>, right: Box<Expression> },
     /// A function or method call. `callee` is the expression being called.
@@ -111,6 +114,8 @@ pub enum Statement {
     Class { is_public: bool, name: String, members: Vec<ClassMember> },
     /// A try-catch block.
     TryCatch { try_block: Vec<Statement>, catch_var: String, catch_block: Vec<Statement> },
+    Break,
+    Continue,
 }
 
 /// The root of the AST, representing the entire program as a list of statements.

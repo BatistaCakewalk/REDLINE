@@ -34,6 +34,7 @@ pub fn generate(program: &Program, mode: GenMode, module_name: &str) -> Result<S
         includes.push_str("#include <iostream>\n");
     }
     includes.push_str("#include <memory>\n"); // For std::shared_ptr
+    includes.push_str("#include <map>\n"); // For std::map
     includes.push_str(&format!("#include \"{}.hpp\"\n", module_name));
     for stmt in &program.statements {
         if let Statement::Import(path) = stmt {
@@ -42,6 +43,11 @@ pub fn generate(program: &Program, mode: GenMode, module_name: &str) -> Result<S
         }
     }
     cpp_code.push_str(&includes);
+
+    // Global variable definition for main module
+    if has_main {
+        cpp_code.push_str("\nstd::vector<std::string> rl::args;\n");
+    }
 
     // Implementations
     cpp_code.push_str("\nnamespace rl {\n\n");
@@ -73,7 +79,8 @@ pub fn generate(program: &Program, mode: GenMode, module_name: &str) -> Result<S
 
     // Main Function
     if has_main {
-        cpp_code.push_str("\nint main() {\n");
+        cpp_code.push_str("\nint main(int argc, char* argv[]) {\n");
+        cpp_code.push_str("    rl::args.assign(argv, argv + argc);\n");
         cpp_code.push_str("    std::ios_base::sync_with_stdio(false);\n");
         cpp_code.push_str("    std::cin.tie(NULL);\n\n");
         cpp_code.push_str("    using namespace rl;\n");
@@ -91,11 +98,14 @@ fn generate_hpp(program: &Program, module_name: &str) -> Result<String, CodegenE
 
     hpp_code.push_str(&format!("#ifndef {}\n#define {}\n\n", guard, guard));
     hpp_code.push_str("#include <memory>\n"); // For std::shared_ptr
+    hpp_code.push_str("#include <map>\n"); // For std::map
     hpp_code.push_str("#include \"stdlib/rl_io.hpp\"\n");
     hpp_code.push_str("#include \"stdlib/rl_math.hpp\"\n");
     hpp_code.push_str("#include \"stdlib/rl_stdlib.hpp\"\n");
     hpp_code.push_str("#include \"stdlib/rl_file.hpp\"\n");
     hpp_code.push_str("#include \"stdlib/rl_string.hpp\"\n");
+    hpp_code.push_str("#include \"stdlib/rl_random.hpp\"\n");
+    hpp_code.push_str("#include \"stdlib/rl_time.hpp\"\n");
     hpp_code.push_str("#include <string>\n#include <vector>\n\n");
     hpp_code.push_str("namespace rl {\n\n");
 
@@ -149,6 +159,7 @@ fn generate_statement(statement: &Statement, indent_level: usize, mode: GenMode,
         Statement::Declaration { name, data_type, initializer, .. } => {
             let type_str = match data_type {
                 Type::Class(class_name) => format!("std::shared_ptr<{}>", class_name),
+                Type::Dict(key, value) => format!("std::map<{}, {}>", key.to_string(), value.to_string()),
                 _ => data_type.to_string(),
             };
             Ok(format!("{}{} {} = {};\n", indent, type_str, name, generate_expression(initializer)?))
@@ -214,6 +225,8 @@ fn generate_statement(statement: &Statement, indent_level: usize, mode: GenMode,
             code.push_str(&format!("{}}}\n", indent));
             Ok(code)
         },
+        Statement::Break => Ok(format!("{}break;\n", indent)),
+        Statement::Continue => Ok(format!("{}continue;\n", indent)),
         _ => Ok("".to_string())
     }
 }
@@ -230,7 +243,7 @@ fn generate_expression(expr: &Expression) -> Result<String, CodegenError> {
         }
         Expression::Identifier(name) => {
             match name.as_str() {
-                "to_string" => Ok("std::to_string".to_string()),
+                "to_string" => Ok("rl::to_string".to_string()),
                 "to_int" => Ok("std::stoi".to_string()),
                 "to_float" => Ok("std::stod".to_string()),
                 "read_file" => Ok("rl::read_file".to_string()),
@@ -238,6 +251,15 @@ fn generate_expression(expr: &Expression) -> Result<String, CodegenError> {
                 "split" => Ok("rl::split".to_string()),
                 "join" => Ok("rl::join".to_string()),
                 "contains" => Ok("rl::contains".to_string()),
+                "args" => Ok("rl::args".to_string()),
+                "exists" => Ok("rl::exists".to_string()),
+                "remove" => Ok("rl::remove".to_string()),
+                "list_dir" => Ok("rl::list_dir".to_string()),
+                "mkdir" => Ok("rl::mkdir".to_string()),
+                "random_int" => Ok("rl::random_int".to_string()),
+                "random_float" => Ok("rl::random_float".to_string()),
+                "time" => Ok("rl::time".to_string()),
+                "sleep" => Ok("rl::sleep".to_string()),
                 _ => Ok(name.clone()),
             }
         }
@@ -255,6 +277,13 @@ fn generate_expression(expr: &Expression) -> Result<String, CodegenError> {
         Expression::ListLiteral(elements) => {
             let elems: Result<Vec<String>, _> = elements.iter().map(generate_expression).collect();
             Ok(format!("{{ {} }}", elems?.join(", ")))
+        },
+        Expression::DictLiteral(entries) => {
+            let mut entry_strs = Vec::new();
+            for (key, value) in entries {
+                entry_strs.push(format!("{{{}, {}}}", generate_expression(key)?, generate_expression(value)?));
+            }
+            Ok(format!("{{ {} }}", entry_strs.join(", ")))
         }
     }
 }

@@ -3,13 +3,13 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
     // Keywords
-    Var, Val, Def, Pub, Print, Return, If, Else, True, False, While, For, In, Import, Class, This, Try, Catch, New,
+    Var, Val, Def, Pub, Print, Return, If, Else, True, False, While, For, In, Import, Class, This, Try, Catch, New, Break, Continue,
 
     // Literals and Identifiers
-    Ident(String), Int(i64), Float(f64), Str(String), Type(String),
+    Ident(String), Int(i64), Float(f64), Str(String), FString(String), Type(String),
 
     // Operators and Punctuation
-    Op(String), Arrow, Colon, Assign, LParen, RParen, LBracket, RBracket, Comma, Newline, Range, Dot,
+    Op(String), Arrow, Colon, Assign, LParen, RParen, LBracket, RBracket, LBrace, RBrace, Comma, Newline, Range, Dot,
 
     // Indentation
     Indent, Dedent,
@@ -127,6 +127,8 @@ impl Lexer {
                 ')' => { tokens.push(Token::new(TokenType::RParen, self.line, start_col)); self.advance(); },
                 '[' => { tokens.push(Token::new(TokenType::LBracket, self.line, start_col)); self.advance(); },
                 ']' => { tokens.push(Token::new(TokenType::RBracket, self.line, start_col)); self.advance(); },
+                '{' => { tokens.push(Token::new(TokenType::LBrace, self.line, start_col)); self.advance(); },
+                '}' => { tokens.push(Token::new(TokenType::RBrace, self.line, start_col)); self.advance(); },
                 ',' => { tokens.push(Token::new(TokenType::Comma, self.line, start_col)); self.advance(); },
                 '=' => {
                     if self.pos + 1 < self.input.len() && self.input[self.pos + 1] == '=' {
@@ -190,6 +192,47 @@ impl Lexer {
                         return Err(LexerError { message: "Unterminated string literal".to_string(), line: self.line, column: start_col });
                     }
                 },
+                'f' => {
+                    if self.pos + 1 < self.input.len() && self.input[self.pos + 1] == '"' {
+                        self.advance(); // consume 'f'
+                        self.advance(); // consume '"'
+                        let mut s = String::new();
+                        while self.pos < self.input.len() {
+                            if self.input[self.pos] == '"' { break; }
+                            if self.input[self.pos] == '\\' {
+                                self.advance();
+                                if self.pos < self.input.len() {
+                                    match self.input[self.pos] {
+                                        'n' => s.push('\n'), 't' => s.push('\t'), 'r' => s.push('\r'),
+                                        '\\' => s.push('\\'), '"' => s.push('"'),
+                                        _ => s.push(self.input[self.pos]),
+                                    }
+                                }
+                            } else { s.push(self.input[self.pos]); }
+                            self.advance();
+                        }
+                        if self.pos < self.input.len() && self.input[self.pos] == '"' {
+                            tokens.push(Token::new(TokenType::FString(s), self.line, start_col));
+                            self.advance();
+                        } else {
+                            return Err(LexerError { message: "Unterminated f-string literal".to_string(), line: self.line, column: start_col });
+                        }
+                    } else {
+                        // Normal identifier starting with 'f'
+                        let mut ident = String::new();
+                        while self.pos < self.input.len() && (self.input[self.pos].is_alphanumeric() || self.input[self.pos] == '_') {
+                            ident.push(self.input[self.pos]);
+                            self.advance();
+                        }
+                        let token_type = match ident.as_str() {
+                            "false" => TokenType::False,
+                            "for" => TokenType::For,
+                            "float" => TokenType::Type(ident),
+                            _ => TokenType::Ident(ident),
+                        };
+                        tokens.push(Token::new(token_type, self.line, start_col));
+                    }
+                },
                 _ if c.is_alphabetic() => {
                     let mut ident = String::new();
                     while self.pos < self.input.len() && (self.input[self.pos].is_alphanumeric() || self.input[self.pos] == '_') {
@@ -204,7 +247,8 @@ impl Lexer {
                         "while" => TokenType::While, "for" => TokenType::For, "in" => TokenType::In,
                         "import" => TokenType::Import, "class" => TokenType::Class, "this" => TokenType::This,
                         "try" => TokenType::Try, "catch" => TokenType::Catch, "new" => TokenType::New,
-                        "int" | "float" | "string" | "bool" | "list" | "void" => TokenType::Type(ident),
+                        "break" => TokenType::Break, "continue" => TokenType::Continue,
+                        "int" | "float" | "string" | "bool" | "list" | "void" | "dict" => TokenType::Type(ident),
                         _ => TokenType::Ident(ident),
                     };
                     tokens.push(Token::new(token_type, self.line, start_col));

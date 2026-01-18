@@ -1,4 +1,4 @@
-use crate::lexer::{Token, TokenType};
+use crate::lexer::{Lexer, Token, TokenType}; // Imported Lexer
 use crate::ast::{Program, Statement, Expression, Type, Literal, BinaryOperator, ClassMember};
 
 #[derive(Debug)]
@@ -73,6 +73,15 @@ impl<'a> Parser<'a> {
                         self.expect(TokenType::RBracket, "Expected ']' after list inner type")?;
                         Ok(Type::List(Box::new(inner_type)))
                     },
+                    "dict" => {
+                        self.advance();
+                        self.expect(TokenType::LBracket, "Expected '[' after 'dict'")?;
+                        let key_type = self.parse_type()?;
+                        self.expect(TokenType::Comma, "Expected ',' after dictionary key type")?;
+                        let value_type = self.parse_type()?;
+                        self.expect(TokenType::RBracket, "Expected ']' after dictionary value type")?;
+                        Ok(Type::Dict(Box::new(key_type), Box::new(value_type)))
+                    },
                     _ => Err(self.error(format!("Unknown built-in type: {}", ty_str))),
                 }
             },
@@ -88,6 +97,75 @@ impl<'a> Parser<'a> {
     fn parse_expression_primary(&mut self) -> Result<Expression, ParserError> {
         let token = self.current_token();
         let mut expr = match &token.token_type {
+            TokenType::FString(s) => {
+                self.advance();
+                let mut parts = Vec::new();
+                let mut last_pos = 0;
+                let mut chars: Vec<char> = s.chars().collect();
+                let mut i = 0;
+
+                while i < chars.len() {
+                    if chars[i] == '{' {
+                        // Add string literal before '{'
+                        if i > last_pos {
+                            let literal = s[last_pos..i].to_string();
+                            parts.push(Expression::Literal(Literal::String(literal)));
+                        }
+
+                        // Find matching '}'
+                        let start_expr = i + 1;
+                        let mut brace_count = 1;
+                        i += 1;
+                        while i < chars.len() && brace_count > 0 {
+                            if chars[i] == '{' { brace_count += 1; }
+                            else if chars[i] == '}' { brace_count -= 1; }
+                            i += 1;
+                        }
+
+                        if brace_count == 0 {
+                            let expr_str = s[start_expr..i-1].to_string();
+                            // Parse expression inside {}
+                            let mut lexer = Lexer::new(expr_str);
+                            let tokens = lexer.tokenize().map_err(|e| ParserError { message: e.message, line: token.line, column: token.column })?;
+                            let mut parser = Parser::new(&tokens);
+                            let expr = parser.parse_expression()?;
+
+                            // Wrap in to_string()
+                            let to_string_call = Expression::Call {
+                                callee: Box::new(Expression::Identifier("to_string".to_string())),
+                                args: vec![expr]
+                            };
+                            parts.push(to_string_call);
+                            last_pos = i;
+                        } else {
+                            return Err(self.error("Unclosed '{' in f-string".to_string()));
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+
+                // Add remaining string literal
+                if last_pos < chars.len() {
+                    let literal = s[last_pos..].to_string();
+                    parts.push(Expression::Literal(Literal::String(literal)));
+                }
+
+                // Combine parts with '+'
+                if parts.is_empty() {
+                    Ok(Expression::Literal(Literal::String("".to_string())))
+                } else {
+                    let mut final_expr = parts[0].clone();
+                    for j in 1..parts.len() {
+                        final_expr = Expression::BinaryOp {
+                            op: BinaryOperator::Add,
+                            left: Box::new(final_expr),
+                            right: Box::new(parts[j].clone())
+                        };
+                    }
+                    Ok(final_expr)
+                }
+            },
             TokenType::New => {
                 self.advance();
                 if let TokenType::Ident(class_name) = self.current_token().token_type {
@@ -125,6 +203,39 @@ impl<'a> Parser<'a> {
                 Ok(expr)
             },
             TokenType::LBracket => self.parse_list_literal(),
+            TokenType::LBrace => {
+                self.advance();
+                let mut entries = Vec::new();
+
+                // Consume optional newline and indent after '{'
+                self.consume_if(TokenType::Newline);
+                self.consume_if(TokenType::Indent);
+
+                if !self.consume_if(TokenType::RBrace) {
+                    loop {
+                        // Consume optional newlines/indent before key
+                        self.consume_if(TokenType::Newline);
+                        self.consume_if(TokenType::Indent);
+
+                        let key = self.parse_expression()?;
+                        self.expect(TokenType::Colon, "Expected ':' after dictionary key")?;
+                        let value = self.parse_expression()?;
+                        entries.push((key, value));
+
+                        if !self.consume_if(TokenType::Comma) {
+                            // Consume optional newline before '}'
+                            self.consume_if(TokenType::Newline);
+                            break;
+                        }
+                        // Consume optional newline after ','
+                        self.consume_if(TokenType::Newline);
+                    }
+                    // Consume optional dedent before '}'
+                    self.consume_if(TokenType::Dedent);
+                    self.expect(TokenType::RBrace, "Expected '}' after dictionary entries")?;
+                }
+                Ok(Expression::DictLiteral(entries))
+            },
             _ => Err(self.error(format!("Expected a primary expression, got {:?}", token.token_type))),
         }?;
 
@@ -402,6 +513,14 @@ impl<'a> Parser<'a> {
             TokenType::Import => self.parse_import_statement(),
             TokenType::Class => self.parse_class_statement(false),
             TokenType::Try => self.parse_try_catch_statement(),
+            TokenType::Break => {
+                self.advance();
+                Ok(Statement::Break)
+            },
+            TokenType::Continue => {
+                self.advance();
+                Ok(Statement::Continue)
+            },
             TokenType::Print => {
                 self.advance();
                 self.expect(TokenType::LParen, "Expected '(' after 'print'")?;

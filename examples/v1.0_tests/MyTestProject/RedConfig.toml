@@ -1,0 +1,8 @@
+[project]
+name = "MyTestProject"
+version = "0.1.0"
+entry_point = "src/main.rl"
+output_dir = "bin"
+
+[dependencies]
+# Dependencies will go here later
