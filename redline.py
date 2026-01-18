@@ -130,22 +130,15 @@ def init_core():
         return False
         
     try:
-        process = subprocess.Popen(
+        # Simplified subprocess call to let cargo print directly to stdout/stderr
+        result = subprocess.run(
             ["cargo", "build", "--release"],
             cwd=CORE_DIR, 
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            env=env
+            env=env,
+            check=False # Don't raise exception, check return code manually
         )
         
-        for line in iter(process.stdout.readline, ''):
-            print(f"   {line.strip()}")
-            
-        process.wait()
-        
-        if process.returncode != 0:
+        if result.returncode != 0:
             print("\nError: Cargo build failed.")
             return False
 
