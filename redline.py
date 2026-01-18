@@ -9,14 +9,20 @@ from pathlib import Path
 try:
     import tomllib
 except ImportError:
-    import toml as tomllib
+    # For Python versions before 3.11, use the 'toml' library
+    try:
+        import toml as tomllib
+    except ImportError:
+        print("Error: 'toml' library not found. Please run 'pip install toml'")
+        sys.exit(1)
 
 # --- Constants ---
 VERSION = "1.0.1"
-PROJECT_ROOT = Path(__file__).parent.resolve()
+# Use os.path.realpath to correctly resolve the script's true location, even when symlinked
+PROJECT_ROOT = Path(os.path.dirname(os.path.realpath(__file__)))
 CORE_DIR = PROJECT_ROOT / "redline-core"
 CORE_BIN = CORE_DIR / "target" / "release" / "redline-core"
-BUILD_DIR = PROJECT_ROOT / "temp_build" # Changed from "build"
+BUILD_DIR = PROJECT_ROOT / "temp_build"
 
 ASCII_ART = r"""
 ██████╗ ███████╗██████╗ ██╗     ██╗███╗   ██╗███████╗
@@ -39,7 +45,6 @@ def print_usage():
     print("  build [file]    Compile a REDLINE project or a single file.")
     print("  parse <file.rl> Generate C++ code from a REDLINE file without compiling.")
     print("  lib <file.rl>   Compile a REDLINE file into a static library (.o).")
-    print("  test            Run all tests in a local 'tests/' directory.")
     print("  init            Initialize and build the REDLINE compiler core.")
     print("  help            Show this help message.")
 
@@ -78,7 +83,7 @@ class Compiler:
             return json.loads(result.stdout)
         except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
             print(f"Error: Failed to parse {source_file.name}.")
-            if hasattr(e, 'stderr'): print(e.stderr, file=sys.stderr)
+            if hasattr(e, 'stderr') and e.stderr: print(e.stderr, file=sys.stderr)
             return None
 
     def compile_module_recursive(self, source_path):
@@ -87,7 +92,7 @@ class Compiler:
             return self.modules[source_path]
 
         print(f"  -> Analyzing module: {source_path.name}")
-        ast = self.get_ast(source_path)
+        ast = self.get_ast(source_file)
         if not ast:
             return None
 
@@ -113,22 +118,40 @@ class Compiler:
             return True
         except subprocess.CalledProcessError as e:
             print(f"Error: Failed to generate {mode.upper()} for {module.name}.")
-            print(e.stderr, file=sys.stderr)
+            if hasattr(e, 'stderr') and e.stderr: print(e.stderr, file=sys.stderr)
             return False
 
 def init_core():
     """Initializes the REDLINE compiler core."""
     print("Initializing REDLINE Core...")
+    
+    # Ensure we are running from the project root for cargo
+    os.chdir(PROJECT_ROOT)
+
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["cargo", "build", "--release"],
-            cwd=CORE_DIR, check=True, capture_output=True, text=True
+            cwd=CORE_DIR,
+            check=True,
+            capture_output=True,
+            text=True
         )
+        print(result.stdout)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+
         print("REDLINE Core initialized successfully.")
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"Error: Core initialization failed.")
-        if hasattr(e, 'stderr'): print(e.stderr, file=sys.stderr)
+    except FileNotFoundError:
+        print("Error: 'cargo' command not found. Please install Rust from https://rustup.rs/.")
+        return False
+    except subprocess.CalledProcessError as e:
+        print("\nError: Cargo build failed.")
+        print(e.stdout)
+        print(e.stderr, file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
         return False
 
 def find_config(start_path):
@@ -142,6 +165,9 @@ def find_config(start_path):
     return None
 
 def main():
+    # Ensure all paths are relative to the project root, even if called from elsewhere
+    os.chdir(PROJECT_ROOT)
+
     if len(sys.argv) < 2 or sys.argv[1] == 'help':
         print_usage()
         return
@@ -149,14 +175,15 @@ def main():
     command = sys.argv[1]
 
     if command == "init":
-        init_core()
+        if not init_core():
+            sys.exit(1)
         return
 
     if not CORE_BIN.exists():
         print("REDLINE Core binary not found. Running 'init' first...")
         if not init_core():
             print("Aborting due to core initialization failure.")
-            return
+            sys.exit(1)
         print("Core initialized. Continuing...")
 
     source_file = None
