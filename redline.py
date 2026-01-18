@@ -120,33 +120,30 @@ def init_core():
     """Initializes the REDLINE compiler core."""
     print("Initializing REDLINE Core...")
     
-    env = os.environ.copy()
-    cargo_home = Path.home() / ".cargo" / "bin"
-    env["PATH"] = str(cargo_home) + os.pathsep + env["PATH"]
-
-    if not shutil.which("cargo", path=env["PATH"]):
-        print("Error: 'cargo' command not found.")
-        print("Please install Rust from https://rustup.rs/ and ensure it's in your PATH.")
+    cargo_path = Path.home() / ".cargo" / "bin" / "cargo"
+    if not cargo_path.exists():
+        print("Error: Could not find 'cargo' at the standard location (~/.cargo/bin/cargo).")
+        print("Please install Rust from https://rustup.rs/.")
         return False
         
     try:
-        # Simplified subprocess call to let cargo print directly to stdout/stderr
         result = subprocess.run(
-            ["cargo", "build", "--release"],
-            cwd=CORE_DIR, 
-            env=env,
-            check=False # Don't raise exception, check return code manually
+            [str(cargo_path), "build", "--release"],
+            cwd=CORE_DIR,
+            check=True,
+            capture_output=True,
+            text=True
         )
-        
-        if result.returncode != 0:
-            print("\nError: Cargo build failed.")
-            return False
+        print(result.stdout)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
 
         print("REDLINE Core initialized successfully.")
         return True
-    except FileNotFoundError:
-        print("Error: 'cargo' command not found in the script's execution environment.")
-        print("Please ensure the Rust toolchain is installed and accessible.")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"Error: Core initialization failed.")
+        if hasattr(e, 'stdout') and e.stdout: print(e.stdout)
+        if hasattr(e, 'stderr') and e.stderr: print(e.stderr, file=sys.stderr)
         return False
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
