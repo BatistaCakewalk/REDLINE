@@ -27,8 +27,7 @@ This project is feature-complete and ready for its v1.0 release.
 Run the installer script from your terminal. This will install the `redline` command system-wide.
 ```bash
 # Download and run the installer
-curl -sSL https://raw.githubusercontent.com/REDTOPS-Enterprise/REDLINE/main/install.sh | bash
-```
+curl -sSL https://raw.githubusercontent.com/REDTOPS-Enterprise/REDLINE/main/install.sh | sudo bash```
 You may be prompted for your password to create the system-wide command in `/usr/local/bin`.
 
 ### Windows
