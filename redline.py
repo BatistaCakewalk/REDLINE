@@ -16,7 +16,7 @@ VERSION = "1.0.1"
 PROJECT_ROOT = Path(__file__).parent.resolve()
 CORE_DIR = PROJECT_ROOT / "redline-core"
 CORE_BIN = CORE_DIR / "target" / "release" / "redline-core"
-BUILD_DIR = PROJECT_ROOT / "temp_build" # Changed from "build"
+BUILD_DIR = PROJECT_ROOT / "temp_build"
 
 ASCII_ART = r"""
 ██████╗ ███████╗██████╗ ██╗     ██╗███╗   ██╗███████╗
@@ -34,12 +34,11 @@ def print_usage():
     print("---------------------------------")
     print("A high-performance, transpiled systems language.")
     print("\nUsage:")
-    print("  python redline.py <command> [arguments]")
+    print("  redline <command> [arguments]")
     print("\nCommands:")
     print("  build [file]    Compile a REDLINE project or a single file.")
     print("  parse <file.rl> Generate C++ code from a REDLINE file without compiling.")
     print("  lib <file.rl>   Compile a REDLINE file into a static library (.o).")
-    print("  test            Run all tests in a local 'tests/' directory.")
     print("  init            Initialize and build the REDLINE compiler core.")
     print("  help            Show this help message.")
 
@@ -119,11 +118,32 @@ class Compiler:
 def init_core():
     """Initializes the REDLINE compiler core."""
     print("Initializing REDLINE Core...")
+    if not shutil.which("cargo"):
+        print("Error: 'cargo' command not found.")
+        print("Please install Rust from https://rustup.rs/ and ensure it's in your PATH.")
+        return False
+        
     try:
-        subprocess.run(
+        # We use Popen to stream the output in real-time
+        process = subprocess.Popen(
             ["cargo", "build", "--release"],
-            cwd=CORE_DIR, check=True, capture_output=True, text=True
+            cwd=CORE_DIR, 
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
         )
+        
+        # Print cargo's output line by line
+        for line in iter(process.stdout.readline, ''):
+            print(f"   {line.strip()}")
+            
+        process.wait()
+        
+        if process.returncode != 0:
+            print("\nError: Cargo build failed.")
+            return False
+
         print("REDLINE Core initialized successfully.")
         return True
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
@@ -149,14 +169,15 @@ def main():
     command = sys.argv[1]
 
     if command == "init":
-        init_core()
+        if not init_core():
+            sys.exit(1)
         return
 
     if not CORE_BIN.exists():
         print("REDLINE Core binary not found. Running 'init' first...")
         if not init_core():
             print("Aborting due to core initialization failure.")
-            return
+            sys.exit(1)
         print("Core initialized. Continuing...")
 
     source_file = None
