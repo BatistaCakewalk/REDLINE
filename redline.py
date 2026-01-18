@@ -118,23 +118,28 @@ class Compiler:
 def init_core():
     """Initializes the REDLINE compiler core."""
     print("Initializing REDLINE Core...")
-    if not shutil.which("cargo"):
+    
+    # Create a modified environment that includes the user's cargo path
+    env = os.environ.copy()
+    cargo_home = Path.home() / ".cargo" / "bin"
+    env["PATH"] = str(cargo_home) + os.pathsep + env["PATH"]
+
+    if not shutil.which("cargo", path=env["PATH"]):
         print("Error: 'cargo' command not found.")
         print("Please install Rust from https://rustup.rs/ and ensure it's in your PATH.")
         return False
         
     try:
-        # We use Popen to stream the output in real-time
         process = subprocess.Popen(
             ["cargo", "build", "--release"],
             cwd=CORE_DIR, 
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            bufsize=1
+            bufsize=1,
+            env=env # Use the modified environment
         )
         
-        # Print cargo's output line by line
         for line in iter(process.stdout.readline, ''):
             print(f"   {line.strip()}")
             
@@ -146,9 +151,12 @@ def init_core():
 
         print("REDLINE Core initialized successfully.")
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"Error: Core initialization failed.")
-        if hasattr(e, 'stderr'): print(e.stderr, file=sys.stderr)
+    except FileNotFoundError:
+        print("Error: 'cargo' command not found in the script's execution environment.")
+        print("Please ensure the Rust toolchain is installed and accessible.")
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
         return False
 
 def find_config(start_path):
