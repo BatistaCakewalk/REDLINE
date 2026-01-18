@@ -13,7 +13,8 @@ except ImportError:
 
 # --- Constants ---
 VERSION = "1.0.1"
-PROJECT_ROOT = Path(__file__).parent.resolve()
+# Use os.path.realpath to correctly resolve the script's true location, even when symlinked
+PROJECT_ROOT = Path(os.path.dirname(os.path.realpath(__file__)))
 CORE_DIR = PROJECT_ROOT / "redline-core"
 CORE_BIN = CORE_DIR / "target" / "release" / "redline-core"
 BUILD_DIR = PROJECT_ROOT / "temp_build"
@@ -119,7 +120,6 @@ def init_core():
     """Initializes the REDLINE compiler core."""
     print("Initializing REDLINE Core...")
     
-    # Create a modified environment that includes the user's cargo path
     env = os.environ.copy()
     cargo_home = Path.home() / ".cargo" / "bin"
     env["PATH"] = str(cargo_home) + os.pathsep + env["PATH"]
@@ -137,7 +137,7 @@ def init_core():
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            env=env # Use the modified environment
+            env=env
         )
         
         for line in iter(process.stdout.readline, ''):

@@ -50,6 +50,6 @@ echo "Initializing REDLINE compiler core (as user $SUDO_USER)..."
 sudo -u "$SUDO_USER" "$INSTALL_DIR/redline.py" init
 
 echo ""
-echo "✅ REDLINE v1.0 installed successfully!"
+echo "✅ REDLINE v1.0.1 installed successfully!"
 echo "You can now use the 'redline' command anywhere on your system."
 echo "(You may need to open a new terminal for the command to be available)."
